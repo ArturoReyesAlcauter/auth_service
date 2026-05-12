@@ -1,0 +1,28 @@
+[project]
+name = "api-mp"
+version = "0.1.0"
+description = "API Medidas de Protecci�n"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "aerich>=0.9.2",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.135.1",
+    "httpx>=0.28.1",
+    "pwdlib[argon2]>=0.3.0",
+    "pydantic-settings>=2.13.1",
+    "pydantic[email]>=2.12.5",
+    "pyjwt>=2.11.0",
+    "pyotp>=2.9.0",
+    "pytest>=9.0.2",
+    "python-multipart>=0.0.22",
+    "qrcode[pil]>=8.2",
+    "tomlkit>=0.14.0",
+    "tortoise-orm>=0.25.4",
+    "uvicorn>=0.41.0",
+]
+
+[tool.aerich]
+tortoise_orm = "app.core.config.TORTOISE_ORM"
+location = "./migrations"
+src_folder = "./."
