@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.schemas.token import Token
 from app.services import auth_service
 from app.core.security import create_access_token
-from app.models.user import User
+from app.models.user import User, UsuarioAccion
 
 
 router = APIRouter(tags=["Autenticación"])
@@ -39,6 +39,18 @@ def usuario_esta_activo(user: User) -> bool:
         return False
 
     return user.estatus.nombre.lower() == "activo"
+
+# --- HELPER PARA OBTENER LOS CLAIMS ---
+async def generar_payload_usuario(user: User) -> dict:
+    """Extrae las acciones del usuario y prepara el payload del JWT."""
+    acciones_db = await UsuarioAccion.filter(usuario_id=user.id).prefetch_related("accion")
+    lista_acciones = [ua.accion.nombre for ua in acciones_db]
+    
+    return {
+        "sub": str(user.id),
+        "instancia_id": user.instancia_id, # Este será el entidad_federativa_id en el otro backend
+        "acciones": lista_acciones
+    }
 
 
 # --- 1. LOGIN PASO 1: Validar credenciales ---
@@ -111,7 +123,8 @@ async def login_verify_2fa(data: Verify2FA):
             detail="Código de verificación incorrecto",
         )
 
-    access_token = create_access_token(data={"sub": str(user.id)})
+    payload = await generar_payload_usuario(user)
+    access_token = create_access_token(data=payload)
 
     return Token(
         access_token=access_token,
@@ -205,7 +218,8 @@ async def enable_2fa(data: Verify2FA):
     await user.save()
 
     # Entregamos token para que el usuario no tenga que loguearse de nuevo tras activar
-    access_token = create_access_token(data={"sub": str(user.id)})
+    payload = await generar_payload_usuario(user)
+    access_token = create_access_token(data=payload)
 
     return Token(
         access_token=access_token,
