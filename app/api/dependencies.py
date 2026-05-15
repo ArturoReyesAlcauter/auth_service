@@ -1,22 +1,26 @@
 from typing import Callable
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jwt import InvalidTokenError
 
 from app.core.security import decode_access_token
 from app.models.user import User, UsuarioAccion
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+bearer_scheme = HTTPBearer()
 
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No se pudieron validar las credenciales.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    token = credentials.credentials
 
     try:
         payload = decode_access_token(token)
@@ -44,12 +48,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 async def get_current_active_user(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """
-    Valida que el usuario esté activo.
-
-    En el modelo nuevo ya no usamos is_active.
-    Ahora usamos cat_estatus_usuarios.
-    """
     if not current_user.estatus:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -66,13 +64,6 @@ async def get_current_active_user(
 
 
 def requiere_accion(nombre_accion: str) -> Callable:
-    """
-    Dependencia dinámica para proteger endpoints por acción.
-
-    Ejemplo:
-        usuario = Depends(requiere_accion("CREAR_NNA"))
-    """
-
     async def validar_permiso(
         current_user: User = Depends(get_current_active_user),
     ) -> User:

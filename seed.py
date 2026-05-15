@@ -1,5 +1,4 @@
 import asyncio
-import pyotp
 
 from tortoise import Tortoise
 
@@ -103,7 +102,12 @@ async def main():
         },
     )
 
-    registros = [registro_mp, registro_mh, registro_vf, registro_rncas]
+    registros = [
+        registro_mp,
+        registro_mh,
+        registro_vf,
+        registro_rncas,
+    ]
 
     # ==========================================
     # 4. MÓDULOS Y ACCIONES BASE
@@ -113,6 +117,9 @@ async def main():
     modulos_creados = []
 
     for registro in registros:
+        # ------------------------------------------
+        # Módulo operativo: DATOS_GENERALES
+        # ------------------------------------------
         modulo_datos_generales, _ = await Modulo.get_or_create(
             registro_principal=registro,
             nombre="DATOS_GENERALES",
@@ -123,14 +130,55 @@ async def main():
 
         modulos_creados.append(modulo_datos_generales)
 
-        for nombre_accion in [
+        acciones_operativas = [
             f"LEER_{registro.nombre}_DATOS_GENERALES",
             f"CREAR_{registro.nombre}_DATOS_GENERALES",
             f"EDITAR_{registro.nombre}_DATOS_GENERALES",
             f"ELIMINAR_{registro.nombre}_DATOS_GENERALES",
-        ]:
+        ]
+
+        for nombre_accion in acciones_operativas:
             accion, _ = await Accion.get_or_create(
                 modulo=modulo_datos_generales,
+                nombre=nombre_accion,
+                defaults={
+                    "descripcion": f"Permite {nombre_accion.lower().replace('_', ' ')}",
+                },
+            )
+
+            acciones_creadas.append(accion)
+
+        # ------------------------------------------
+        # Módulo administrativo: ADMINISTRACION_USUARIOS
+        # ------------------------------------------
+        modulo_usuarios, _ = await Modulo.get_or_create(
+            registro_principal=registro,
+            nombre="ADMINISTRACION_USUARIOS",
+            defaults={
+                "descripcion": f"Módulo de administración de usuarios para {registro.nombre}",
+            },
+        )
+
+        modulos_creados.append(modulo_usuarios)
+
+        acciones_administracion_usuarios = [
+            "ADMINISTRAR_USUARIOS",
+            "CREAR_USUARIO",
+            "VER_USUARIOS",
+            "VER_USUARIO_DETALLE",
+            "EDITAR_USUARIO",
+            "DESACTIVAR_USUARIO",
+            "VER_REGISTROS_USUARIO",
+            "VER_MODULOS_USUARIO",
+            "VER_ACCIONES_USUARIO",
+            "ASIGNAR_REGISTROS_USUARIO",
+            "ASIGNAR_MODULOS_USUARIO",
+            "ASIGNAR_ACCIONES_USUARIO",
+        ]
+
+        for nombre_accion in acciones_administracion_usuarios:
+            accion, _ = await Accion.get_or_create(
+                modulo=modulo_usuarios,
                 nombre=nombre_accion,
                 defaults={
                     "descripcion": f"Permite {nombre_accion.lower().replace('_', ' ')}",
@@ -143,8 +191,6 @@ async def main():
     # 5. USUARIO ADMIN PREDETERMINADO
     # ==========================================
 
-    totp_secret = pyotp.random_base32()
-
     admin, created = await User.get_or_create(
         curp=ADMIN_CURP,
         defaults={
@@ -154,8 +200,13 @@ async def main():
             "correo_electronico": ADMIN_EMAIL,
             "numero_telefono": "5500000000",
             "contrasena_hasheada": get_password_hash(ADMIN_PASSWORD),
-            "is_2fa_enabled": True,
-            "totp_secret": totp_secret,
+
+            # Importante:
+            # El admin NO queda con 2FA activo desde el seed.
+            # Tendrá que configurarlo en su primer inicio de sesión.
+            "is_2fa_enabled": False,
+            "totp_secret": None,
+
             "estatus": estatus_activo,
             "instancia": instancia_sndif,
         },
@@ -168,12 +219,10 @@ async def main():
         admin.correo_electronico = ADMIN_EMAIL
         admin.numero_telefono = "5500000000"
         admin.contrasena_hasheada = get_password_hash(ADMIN_PASSWORD)
-        admin.is_2fa_enabled = True
 
-        if not admin.totp_secret:
-            admin.totp_secret = totp_secret
-        else:
-            totp_secret = admin.totp_secret
+        # Forzamos que tenga que configurar Google Authenticator.
+        admin.is_2fa_enabled = False
+        admin.totp_secret = None
 
         admin.estatus = estatus_activo
         admin.instancia = instancia_sndif
@@ -203,15 +252,8 @@ async def main():
         )
 
     # ==========================================
-    # 7. URI PARA GOOGLE AUTHENTICATOR
+    # 7. MENSAJE FINAL
     # ==========================================
-
-    totp = pyotp.TOTP(totp_secret)
-
-    provisioning_uri = totp.provisioning_uri(
-        name=ADMIN_EMAIL,
-        issuer_name="Login PorTusDerechos",
-    )
 
     print("")
     print("Seed ejecutado correctamente.")
@@ -221,15 +263,22 @@ async def main():
     print(f"Correo: {ADMIN_EMAIL}")
     print(f"Password: {ADMIN_PASSWORD}")
     print("")
+    print("Permisos asignados:")
+    print("- Todos los registros principales")
+    print("- Todos los módulos")
+    print("- Todas las acciones operativas")
+    print("- Todas las acciones administrativas de usuarios")
+    print("")
     print("2FA Google Authenticator:")
-    print(f"Secret: {totp_secret}")
+    print("El usuario administrador deberá configurar Google Authenticator en su primer inicio de sesión.")
     print("")
-    print("Provisioning URI:")
-    print(provisioning_uri)
+    print("Flujo esperado:")
+    print("1. POST /login con CURP y contraseña")
+    print("2. El sistema responderá status='pending_setup'")
+    print("3. POST /setup con temp_user_id para generar QR")
+    print("4. POST /enable con el código de Google Authenticator")
+    print("5. El sistema entregará el JWT final")
     print("")
-    print("Abre Google Authenticator y agrega la cuenta usando el secret manualmente.")
-    print("")
-
 
     await Tortoise.close_connections()
 

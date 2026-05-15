@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 
-from app.api.dependencies import get_current_active_user
+from app.api.dependencies import get_current_active_user, requiere_accion
 from app.models.user import User
 from app.schemas.user import (
     UserCreate,
@@ -27,9 +27,13 @@ router = APIRouter(prefix="/users", tags=["Usuarios"])
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def crear_usuario(user_in: UserCreate):
+async def crear_usuario(
+    user_in: UserCreate,
+    current_user: User = Depends(requiere_accion("CREAR_USUARIO")),
+):
     """
     Crea un usuario en el servicio de autenticación.
+    Solo usuarios con permiso CREAR_USUARIO pueden ejecutar esta acción.
     """
     user = await user_service.create_user(user_in)
     await user.fetch_related("estatus", "instancia")
@@ -42,10 +46,11 @@ async def crear_usuario(user_in: UserCreate):
     status_code=status.HTTP_200_OK,
 )
 async def listar_usuarios(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(requiere_accion("VER_USUARIOS")),
 ):
     """
     Lista usuarios registrados.
+    Solo usuarios con permiso VER_USUARIOS pueden ejecutar esta acción.
     """
     return await user_service.get_users()
 
@@ -60,6 +65,7 @@ async def obtener_mi_usuario(
 ):
     """
     Devuelve el usuario autenticado junto con sus permisos.
+    Esta ruta solo requiere que el usuario esté autenticado y activo.
     """
     permisos = await user_service.obtener_permisos_usuario(current_user.id)
 
@@ -77,7 +83,7 @@ async def obtener_mi_usuario(
 async def asignar_registro_usuario(
     user_id: UUID,
     data: UsuarioRegistroCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(requiere_accion("ASIGNAR_REGISTROS_USUARIO")),
 ):
     """
     Asigna un registro principal a un usuario.
@@ -94,7 +100,7 @@ async def asignar_registro_usuario(
 async def asignar_modulo_usuario(
     user_id: UUID,
     data: UsuarioModuloCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(requiere_accion("ASIGNAR_MODULOS_USUARIO")),
 ):
     """
     Asigna un módulo específico a un usuario.
@@ -111,7 +117,7 @@ async def asignar_modulo_usuario(
 async def asignar_accion_usuario(
     user_id: UUID,
     data: UsuarioAccionCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(requiere_accion("ASIGNAR_ACCIONES_USUARIO")),
 ):
     """
     Asigna una acción específica a un usuario.
