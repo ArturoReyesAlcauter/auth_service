@@ -17,9 +17,9 @@ from app.models.user import (
 )
 
 
-ADMIN_CURP = "AURA000101HDFXXX01"
-ADMIN_PASSWORD = "Admin12345!"
-ADMIN_EMAIL = "admin@portusderechos.gob.mx"
+ADMIN_CURP = "REAA950504HDFYLR01"
+ADMIN_PASSWORD = "admin123"
+ADMIN_EMAIL = "portusderechos@dif.gob.mx"
 
 
 async def main():
@@ -190,29 +190,18 @@ async def main():
     # ==========================================
     # 5. USUARIO ADMIN PREDETERMINADO
     # ==========================================
+    # Solución recomendada:
+    # Primero buscamos por correo_electronico porque es único.
+    # Si el admin ya existe, actualizamos su CURP.
+    # Así evitamos el error:
+    # duplicate key value violates unique constraint "usuarios_correo_electronico_key"
 
-    admin, created = await User.get_or_create(
-        curp=ADMIN_CURP,
-        defaults={
-            "nombre": "Administrador",
-            "primer_apellido": "General",
-            "segundo_apellido": "Sistema",
-            "correo_electronico": ADMIN_EMAIL,
-            "numero_telefono": "5500000000",
-            "contrasena_hasheada": get_password_hash(ADMIN_PASSWORD),
+    admin = await User.get_or_none(correo_electronico=ADMIN_EMAIL)
 
-            # Importante:
-            # El admin NO queda con 2FA activo desde el seed.
-            # Tendrá que configurarlo en su primer inicio de sesión.
-            "is_2fa_enabled": False,
-            "totp_secret": None,
+    if admin:
+        created = False
 
-            "estatus": estatus_activo,
-            "instancia": instancia_sndif,
-        },
-    )
-
-    if not created:
+        admin.curp = ADMIN_CURP
         admin.nombre = "Administrador"
         admin.primer_apellido = "General"
         admin.segundo_apellido = "Sistema"
@@ -220,7 +209,7 @@ async def main():
         admin.numero_telefono = "5500000000"
         admin.contrasena_hasheada = get_password_hash(ADMIN_PASSWORD)
 
-        # Forzamos que tenga que configurar Google Authenticator.
+        # Dejamos el 2FA apagado para que tenga que configurarlo otra vez.
         admin.is_2fa_enabled = False
         admin.totp_secret = None
 
@@ -228,6 +217,27 @@ async def main():
         admin.instancia = instancia_sndif
 
         await admin.save()
+
+    else:
+        created = True
+
+        admin = await User.create(
+            curp=ADMIN_CURP,
+            nombre="Administrador",
+            primer_apellido="General",
+            segundo_apellido="Sistema",
+            correo_electronico=ADMIN_EMAIL,
+            numero_telefono="5500000000",
+            contrasena_hasheada=get_password_hash(ADMIN_PASSWORD),
+
+            # El admin NO queda con 2FA activo desde el seed.
+            # Tendrá que configurarlo en su primer inicio de sesión.
+            is_2fa_enabled=False,
+            totp_secret=None,
+
+            estatus=estatus_activo,
+            instancia=instancia_sndif,
+        )
 
     # ==========================================
     # 6. ASIGNAR TODOS LOS PERMISOS AL ADMIN
@@ -257,6 +267,13 @@ async def main():
 
     print("")
     print("Seed ejecutado correctamente.")
+    print("")
+
+    if created:
+        print("Usuario administrador creado.")
+    else:
+        print("Usuario administrador actualizado.")
+
     print("")
     print("Usuario administrador predeterminado:")
     print(f"CURP: {ADMIN_CURP}")

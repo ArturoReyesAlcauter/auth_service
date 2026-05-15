@@ -52,7 +52,13 @@ def verify_totp_code(secret: str | None, code: str) -> bool:
     """
     Verifica el código de 6 dígitos generado por Google Authenticator.
 
-    Mantengo este nombre porque así estaba en tu proyecto anterior.
+    valid_window=1 permite aceptar:
+    - el código del bloque anterior
+    - el código actual
+    - el código del siguiente bloque
+
+    Como TOTP normalmente cambia cada 30 segundos, esto da tolerancia
+    aproximada de +/- 30 segundos.
     """
     if not secret:
         return False
@@ -60,10 +66,17 @@ def verify_totp_code(secret: str | None, code: str) -> bool:
     if not code:
         return False
 
+    clean_code = code.strip().replace(" ", "")
+
+    if not clean_code.isdigit():
+        return False
+
     totp = pyotp.TOTP(secret)
 
-    return totp.verify(code)
-
+    return totp.verify(
+        clean_code,
+        valid_window=1,
+    )
 
 # Alias opcional por si en otro archivo ya estabas usando verify_totp
 def verify_totp(secret: str | None, code: str) -> bool:
