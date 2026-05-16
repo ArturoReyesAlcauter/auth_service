@@ -75,19 +75,45 @@ async def obtener_mi_usuario(
     }
 
 
+# ==========================================
+# ASIGNAR ACCESOS
+# ==========================================
+
+@router.post(
+    "/{user_id}/grupos",
+    response_model=UsuarioRegistroRead,
+    status_code=status.HTTP_201_CREATED,
+)
+async def asignar_grupo_usuario(
+    user_id: UUID,
+    data: UsuarioRegistroCreate,
+    current_user: User = Depends(requiere_accion("ASIGNAR_GRUPOS_USUARIO")),
+):
+    """
+    Asigna un grupo a un usuario.
+
+    Internamente:
+    grupo = RegistroPrincipal.
+    No crea un grupo nuevo, solo crea la asignación usuario-grupo.
+    """
+    return await user_service.assign_user_registro(user_id, data)
+
+
 @router.post(
     "/{user_id}/registros",
     response_model=UsuarioRegistroRead,
     status_code=status.HTTP_201_CREATED,
 )
-async def asignar_registro_usuario(
+async def asignar_registro_usuario_compatibilidad(
     user_id: UUID,
     data: UsuarioRegistroCreate,
-    current_user: User = Depends(requiere_accion("ASIGNAR_REGISTROS_USUARIO")),
+    current_user: User = Depends(requiere_accion("ASIGNAR_GRUPOS_USUARIO")),
 ):
     """
-    Asigna un registro principal a un usuario.
-    Ejemplo: MP, MH, VF, RNCAS.
+    Ruta temporal de compatibilidad.
+
+    Usa /users/{user_id}/grupos en nuevos desarrollos.
+    Internamente, registro = grupo.
     """
     return await user_service.assign_user_registro(user_id, data)
 
@@ -104,7 +130,8 @@ async def asignar_modulo_usuario(
 ):
     """
     Asigna un módulo específico a un usuario.
-    Ejemplo: Datos Generales, NNA, Seguimiento.
+
+    No crea un módulo nuevo, solo crea la asignación usuario-módulo.
     """
     return await user_service.assign_user_modulo(user_id, data)
 
@@ -121,6 +148,64 @@ async def asignar_accion_usuario(
 ):
     """
     Asigna una acción específica a un usuario.
-    Ejemplo: CREAR_NNA, LEER_NNA, EDITAR_NNA.
+
+    No crea una acción nueva, solo crea la asignación usuario-acción.
     """
     return await user_service.assign_user_accion(user_id, data)
+
+
+# ==========================================
+# QUITAR / BLOQUEAR ACCESOS
+# ==========================================
+
+@router.delete(
+    "/{user_id}/grupos/{grupo_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def quitar_grupo_usuario(
+    user_id: UUID,
+    grupo_id: UUID,
+    current_user: User = Depends(requiere_accion("QUITAR_GRUPOS_USUARIO")),
+):
+    """
+    Quita a un usuario el acceso a un grupo.
+
+    No elimina el grupo del catálogo.
+    Solo elimina la asignación en usuario_registros.
+    """
+    return await user_service.remove_user_grupo(user_id, grupo_id)
+
+@router.delete(
+    "/{user_id}/modulos/{modulo_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def quitar_modulo_usuario(
+    user_id: UUID,
+    modulo_id: UUID,
+    current_user: User = Depends(requiere_accion("QUITAR_MODULOS_USUARIO")),
+):
+    """
+    Quita a un usuario el acceso a un módulo.
+
+    No elimina el módulo del catálogo.
+    Solo elimina la asignación en usuario_modulos.
+    """
+    return await user_service.remove_user_modulo(user_id, modulo_id)
+
+
+@router.delete(
+    "/{user_id}/acciones/{accion_id}",
+    status_code=status.HTTP_200_OK,
+)
+async def quitar_accion_usuario(
+    user_id: UUID,
+    accion_id: UUID,
+    current_user: User = Depends(requiere_accion("QUITAR_ACCIONES_USUARIO")),
+):
+    """
+    Quita a un usuario el acceso a una acción.
+
+    No elimina la acción del catálogo.
+    Solo elimina la asignación en usuario_acciones.
+    """
+    return await user_service.remove_user_accion(user_id, accion_id)

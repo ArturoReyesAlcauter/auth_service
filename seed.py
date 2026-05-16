@@ -17,9 +17,13 @@ from app.models.user import (
 )
 
 
-ADMIN_CURP = "REAA950504HDFYLR01"
-ADMIN_PASSWORD = "admin123"
-ADMIN_EMAIL = "portusderechos@dif.gob.mx"
+# ==========================================
+# USUARIO ADMIN PREDETERMINADO
+# ==========================================
+
+ADMIN_CURP = "AURA000101HDFXXX01"
+ADMIN_PASSWORD = "Admin12345!"
+ADMIN_EMAIL = "admin@portusderechos.gob.mx"
 
 
 async def main():
@@ -71,110 +75,191 @@ async def main():
     )
 
     # ==========================================
-    # 3. REGISTROS PRINCIPALES
+    # 3. GRUPOS PRINCIPALES
+    # Internamente todavía usan el modelo RegistroPrincipal.
     # ==========================================
 
-    registro_mp, _ = await RegistroPrincipal.get_or_create(
+    grupo_mp, _ = await RegistroPrincipal.get_or_create(
         nombre="MP",
         defaults={
             "descripcion": "Registro de Medidas de Protección",
         },
     )
 
-    registro_mh, _ = await RegistroPrincipal.get_or_create(
+    grupo_mh, _ = await RegistroPrincipal.get_or_create(
         nombre="MH",
         defaults={
             "descripcion": "Registro de Movilidad Humana",
         },
     )
 
-    registro_vf, _ = await RegistroPrincipal.get_or_create(
+    grupo_vf, _ = await RegistroPrincipal.get_or_create(
         nombre="VF",
         defaults={
             "descripcion": "Registro de Derecho a Vivir en Familia",
         },
     )
 
-    registro_rncas, _ = await RegistroPrincipal.get_or_create(
+    grupo_rncas, _ = await RegistroPrincipal.get_or_create(
         nombre="RNCAS",
         defaults={
             "descripcion": "Registro Nacional de Centros de Asistencia Social",
         },
     )
 
-    registros = [
-        registro_mp,
-        registro_mh,
-        registro_vf,
-        registro_rncas,
+    grupos = [
+        grupo_mp,
+        grupo_mh,
+        grupo_vf,
+        grupo_rncas,
     ]
 
     # ==========================================
-    # 4. MÓDULOS Y ACCIONES BASE
+    # 4. MÓDULOS Y ACCIONES
     # ==========================================
 
     acciones_creadas = []
     modulos_creados = []
 
-    for registro in registros:
-        # ------------------------------------------
-        # Módulo operativo: DATOS_GENERALES
-        # ------------------------------------------
-        modulo_datos_generales, _ = await Modulo.get_or_create(
-            registro_principal=registro,
-            nombre="DATOS_GENERALES",
+    # =====================================================
+    # GRUPO MP - MÓDULO: EXPEDIENTES
+    # =====================================================
+
+    modulo_mp_expedientes, _ = await Modulo.get_or_create(
+        registro_principal=grupo_mp,
+        nombre="EXPEDIENTES",
+        defaults={
+            "descripcion": "Módulo core de expedientes del Registro de Medidas de Protección",
+        },
+    )
+
+    modulos_creados.append(modulo_mp_expedientes)
+
+    acciones_mp_expedientes = [
+        {
+            "nombre": "MP_LEER_REGISTRO",
+            "descripcion": "Permite leer o consultar registros de medidas de protección. Permiso base para capturista y supervisor.",
+        },
+        {
+            "nombre": "MP_CREAR_REGISTRO",
+            "descripcion": "Permite crear un nuevo registro de medidas de protección. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_ENVIAR_REVISION",
+            "descripcion": "Permite enviar un registro a revisión. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_APROBAR_REGISTRO",
+            "descripcion": "Permite aprobar un registro de medidas de protección. Permiso tipo supervisor.",
+        },
+        {
+            "nombre": "MP_DEVOLVER_REGISTRO",
+            "descripcion": "Permite devolver un registro para corrección. Permiso tipo supervisor.",
+        },
+        {
+            "nombre": "MP_VER_DASHBOARD",
+            "descripcion": "Permite visualizar el dashboard del Registro de Medidas de Protección. Permiso base para capturista y supervisor.",
+        },
+    ]
+
+    for accion_data in acciones_mp_expedientes:
+        accion, _ = await Accion.get_or_create(
+            modulo=modulo_mp_expedientes,
+            nombre=accion_data["nombre"],
             defaults={
-                "descripcion": f"Módulo de datos generales para {registro.nombre}",
+                "descripcion": accion_data["descripcion"],
             },
         )
 
-        modulos_creados.append(modulo_datos_generales)
+        acciones_creadas.append(accion)
 
-        acciones_operativas = [
-            f"LEER_{registro.nombre}_DATOS_GENERALES",
-            f"CREAR_{registro.nombre}_DATOS_GENERALES",
-            f"EDITAR_{registro.nombre}_DATOS_GENERALES",
-            f"ELIMINAR_{registro.nombre}_DATOS_GENERALES",
-        ]
+    # =====================================================
+    # GRUPO MP - MÓDULO: SECCIONES
+    # =====================================================
 
-        for nombre_accion in acciones_operativas:
-            accion, _ = await Accion.get_or_create(
-                modulo=modulo_datos_generales,
-                nombre=nombre_accion,
-                defaults={
-                    "descripcion": f"Permite {nombre_accion.lower().replace('_', ' ')}",
-                },
-            )
+    modulo_mp_secciones, _ = await Modulo.get_or_create(
+        registro_principal=grupo_mp,
+        nombre="SECCIONES",
+        defaults={
+            "descripcion": "Módulo de secciones editables del Registro de Medidas de Protección",
+        },
+    )
 
-            acciones_creadas.append(accion)
+    modulos_creados.append(modulo_mp_secciones)
 
-        # ------------------------------------------
-        # Módulo administrativo: ADMINISTRACION_USUARIOS
-        # ------------------------------------------
+    acciones_mp_secciones = [
+        {
+            "nombre": "MP_EDITAR_DATOS_GENERALES",
+            "descripcion": "Permite editar la sección de datos generales. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_EDITAR_IMPRESION_DIAGNOSTICA",
+            "descripcion": "Permite editar la sección de impresión diagnóstica. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_EDITAR_INTERVENCION",
+            "descripcion": "Permite editar la sección de intervención. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_EDITAR_PLAN_RESTITUCION",
+            "descripcion": "Permite editar la sección de plan de restitución. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_EDITAR_MEDIDAS_PROTECCION",
+            "descripcion": "Permite editar la sección de medidas de protección. Permiso tipo capturista.",
+        },
+        {
+            "nombre": "MP_EDITAR_CIERRE_CASO",
+            "descripcion": "Permite editar la sección de cierre de caso. Permiso tipo capturista.",
+        },
+    ]
+
+    for accion_data in acciones_mp_secciones:
+        accion, _ = await Accion.get_or_create(
+            modulo=modulo_mp_secciones,
+            nombre=accion_data["nombre"],
+            defaults={
+                "descripcion": accion_data["descripcion"],
+            },
+        )
+
+        acciones_creadas.append(accion)
+
+    # =====================================================
+    # MÓDULO ADMINISTRATIVO PARA TODOS LOS GRUPOS
+    # =====================================================
+
+    acciones_administracion_usuarios = [
+        "ADMINISTRAR_USUARIOS",
+        "CREAR_USUARIO",
+        "VER_USUARIOS",
+        "VER_USUARIO_DETALLE",
+        "EDITAR_USUARIO",
+        "DESACTIVAR_USUARIO",
+
+        "VER_GRUPOS_USUARIO",
+        "VER_MODULOS_USUARIO",
+        "VER_ACCIONES_USUARIO",
+
+        "ASIGNAR_GRUPOS_USUARIO",
+        "ASIGNAR_MODULOS_USUARIO",
+        "ASIGNAR_ACCIONES_USUARIO",
+
+        "QUITAR_GRUPOS_USUARIO",
+        "QUITAR_MODULOS_USUARIO",
+        "QUITAR_ACCIONES_USUARIO",
+    ]
+
+    for grupo in grupos:
         modulo_usuarios, _ = await Modulo.get_or_create(
-            registro_principal=registro,
+            registro_principal=grupo,
             nombre="ADMINISTRACION_USUARIOS",
             defaults={
-                "descripcion": f"Módulo de administración de usuarios para {registro.nombre}",
+                "descripcion": f"Módulo de administración de usuarios para {grupo.nombre}",
             },
         )
 
         modulos_creados.append(modulo_usuarios)
-
-        acciones_administracion_usuarios = [
-            "ADMINISTRAR_USUARIOS",
-            "CREAR_USUARIO",
-            "VER_USUARIOS",
-            "VER_USUARIO_DETALLE",
-            "EDITAR_USUARIO",
-            "DESACTIVAR_USUARIO",
-            "VER_REGISTROS_USUARIO",
-            "VER_MODULOS_USUARIO",
-            "VER_ACCIONES_USUARIO",
-            "ASIGNAR_REGISTROS_USUARIO",
-            "ASIGNAR_MODULOS_USUARIO",
-            "ASIGNAR_ACCIONES_USUARIO",
-        ]
 
         for nombre_accion in acciones_administracion_usuarios:
             accion, _ = await Accion.get_or_create(
@@ -190,11 +275,8 @@ async def main():
     # ==========================================
     # 5. USUARIO ADMIN PREDETERMINADO
     # ==========================================
-    # Solución recomendada:
-    # Primero buscamos por correo_electronico porque es único.
-    # Si el admin ya existe, actualizamos su CURP.
-    # Así evitamos el error:
-    # duplicate key value violates unique constraint "usuarios_correo_electronico_key"
+    # Buscamos por correo para evitar error de correo duplicado
+    # si cambias el CURP del admin.
 
     admin = await User.get_or_none(correo_electronico=ADMIN_EMAIL)
 
@@ -209,7 +291,7 @@ async def main():
         admin.numero_telefono = "5500000000"
         admin.contrasena_hasheada = get_password_hash(ADMIN_PASSWORD)
 
-        # Dejamos el 2FA apagado para que tenga que configurarlo otra vez.
+        # El admin debe configurar Google Authenticator en su primer login.
         admin.is_2fa_enabled = False
         admin.totp_secret = None
 
@@ -230,8 +312,7 @@ async def main():
             numero_telefono="5500000000",
             contrasena_hasheada=get_password_hash(ADMIN_PASSWORD),
 
-            # El admin NO queda con 2FA activo desde el seed.
-            # Tendrá que configurarlo en su primer inicio de sesión.
+            # El admin debe configurar Google Authenticator en su primer login.
             is_2fa_enabled=False,
             totp_secret=None,
 
@@ -243,10 +324,10 @@ async def main():
     # 6. ASIGNAR TODOS LOS PERMISOS AL ADMIN
     # ==========================================
 
-    for registro in registros:
+    for grupo in grupos:
         await UsuarioRegistro.get_or_create(
             usuario=admin,
-            registro=registro,
+            registro=grupo,
         )
 
     for modulo in modulos_creados:
@@ -280,11 +361,42 @@ async def main():
     print(f"Correo: {ADMIN_EMAIL}")
     print(f"Password: {ADMIN_PASSWORD}")
     print("")
-    print("Permisos asignados:")
-    print("- Todos los registros principales")
-    print("- Todos los módulos")
-    print("- Todas las acciones operativas")
-    print("- Todas las acciones administrativas de usuarios")
+    print("Grupos creados/asignados:")
+    print("- MP  : Registro de Medidas de Protección")
+    print("- MH  : Registro de Movilidad Humana")
+    print("- VF  : Registro de Derecho a Vivir en Familia")
+    print("- RNCAS: Registro Nacional de Centros de Asistencia Social")
+    print("")
+    print("Módulos MP creados:")
+    print("- EXPEDIENTES")
+    print("- SECCIONES")
+    print("")
+    print("Acciones MP - EXPEDIENTES:")
+    print("- MP_LEER_REGISTRO")
+    print("- MP_CREAR_REGISTRO")
+    print("- MP_ENVIAR_REVISION")
+    print("- MP_APROBAR_REGISTRO")
+    print("- MP_DEVOLVER_REGISTRO")
+    print("- MP_VER_DASHBOARD")
+    print("")
+    print("Acciones MP - SECCIONES:")
+    print("- MP_EDITAR_DATOS_GENERALES")
+    print("- MP_EDITAR_IMPRESION_DIAGNOSTICA")
+    print("- MP_EDITAR_INTERVENCION")
+    print("- MP_EDITAR_PLAN_RESTITUCION")
+    print("- MP_EDITAR_MEDIDAS_PROTECCION")
+    print("- MP_EDITAR_CIERRE_CASO")
+    print("")
+    print("Permisos administrativos asignados:")
+    print("- ADMINISTRAR_USUARIOS")
+    print("- CREAR_USUARIO")
+    print("- VER_USUARIOS")
+    print("- ASIGNAR_GRUPOS_USUARIO")
+    print("- ASIGNAR_MODULOS_USUARIO")
+    print("- ASIGNAR_ACCIONES_USUARIO")
+    print("- QUITAR_GRUPOS_USUARIO")
+    print("- QUITAR_MODULOS_USUARIO")
+    print("- QUITAR_ACCIONES_USUARIO")
     print("")
     print("2FA Google Authenticator:")
     print("El usuario administrador deberá configurar Google Authenticator en su primer inicio de sesión.")
