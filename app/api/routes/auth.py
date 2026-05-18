@@ -48,8 +48,9 @@ async def generar_payload_usuario(user: User) -> dict:
     
     return {
         "sub": str(user.id),
-        "instancia_id": user.instancia_id, # Este será el entidad_federativa_id en el otro backend
-        "acciones": lista_acciones
+        "instancia_id": user.instancia_id,
+        "entidad_federativa_id": user.entidad_federativa_id,
+        "acciones": lista_acciones,
     }
 
 

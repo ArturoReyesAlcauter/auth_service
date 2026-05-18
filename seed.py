@@ -22,8 +22,9 @@ from app.models.user import (
 # ==========================================
 
 ADMIN_CURP = "AURA000101HDFXXX01"
-ADMIN_PASSWORD = "Admin12345!"
+ADMIN_PASSWORD = "admin123!"
 ADMIN_EMAIL = "admin@portusderechos.gob.mx"
+ADMIN_ENTIDAD_FEDERATIVA_ID = 9
 
 
 async def main():
@@ -234,7 +235,7 @@ async def main():
         "CREAR_USUARIO",
         "VER_USUARIOS",
         "VER_USUARIO_DETALLE",
-        "EDITAR_USUARIO",
+        "ACTUALIZAR_USUARIO",
         "DESACTIVAR_USUARIO",
 
         "VER_GRUPOS_USUARIO",
@@ -288,6 +289,7 @@ async def main():
         admin.primer_apellido = "General"
         admin.segundo_apellido = "Sistema"
         admin.correo_electronico = ADMIN_EMAIL
+        admin.entidad_federativa_id = ADMIN_ENTIDAD_FEDERATIVA_ID
         admin.numero_telefono = "5500000000"
         admin.contrasena_hasheada = get_password_hash(ADMIN_PASSWORD)
 
@@ -309,6 +311,7 @@ async def main():
             primer_apellido="General",
             segundo_apellido="Sistema",
             correo_electronico=ADMIN_EMAIL,
+            entidad_federativa_id=ADMIN_ENTIDAD_FEDERATIVA_ID,
             numero_telefono="5500000000",
             contrasena_hasheada=get_password_hash(ADMIN_PASSWORD),
 

@@ -91,14 +91,14 @@ async def listar_usuarios(
 async def obtener_mi_usuario(
     current_user: User = Depends(get_current_active_user),
 ):
-    """
-    Devuelve el usuario autenticado junto con sus permisos.
-    Esta ruta solo requiere que el usuario esté autenticado y activo.
-    """
+    await current_user.fetch_related("estatus", "instancia")
+
     permisos = await user_service.obtener_permisos_usuario(current_user.id)
 
     return {
         **current_user.__dict__,
+        "estatus": current_user.estatus,
+        "instancia": current_user.instancia,
         "permisos": permisos,
     }
 
