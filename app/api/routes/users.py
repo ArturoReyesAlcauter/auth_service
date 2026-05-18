@@ -40,6 +40,34 @@ async def crear_usuario(
     await user.fetch_related("estatus", "instancia")
     return user
 
+
+
+@router.patch(
+    "/{user_id}/estatus/{estatus_id}",
+    response_model=UserRead,
+    status_code=status.HTTP_200_OK,
+)
+async def cambiar_estatus_usuario(
+    user_id: UUID,
+    estatus_id: int,
+    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+):
+    """
+    Cambia el estatus de un usuario usando cat_estatus_usuarios.
+
+    Ejemplos:
+    - 1 = Activo
+    - 2 = En Proceso
+    - 3 = Inactivo
+    """
+    return await user_service.cambiar_estatus_usuario(
+        user_id=user_id,
+        estatus_id=estatus_id,
+    )
+
+
+
+
 @router.patch(
     "/{user_id}",
     response_model=UserRead,
@@ -102,6 +130,41 @@ async def obtener_mi_usuario(
         "permisos": permisos,
     }
 
+@router.get(
+    "/{user_id}",
+    response_model=UserWithPermissionsRead,
+    status_code=status.HTTP_200_OK,
+)
+async def obtener_usuario_por_id(
+    user_id: UUID,
+    current_user: User = Depends(requiere_accion("VER_USUARIO_DETALLE")),
+):
+    """
+    Consulta un usuario específico por su ID junto con sus registros,
+    módulos y acciones asignadas.
+    """
+    user = await user_service.get_user_by_id(user_id)
+
+    permisos = await user_service.obtener_permisos_usuario(user.id)
+
+    return {
+        "id": user.id,
+        "nombre": user.nombre,
+        "primer_apellido": user.primer_apellido,
+        "segundo_apellido": user.segundo_apellido,
+        "correo_electronico": user.correo_electronico,
+        "curp": user.curp,
+        "entidad_federativa_id": user.entidad_federativa_id,
+        "numero_telefono": user.numero_telefono,
+        "is_2fa_enabled": user.is_2fa_enabled,
+        "estatus": user.estatus,
+        "instancia": user.instancia,
+        "intentos_login": user.intentos_login,
+        "fecha_correo_verificado": user.fecha_correo_verificado,
+        "fecha_creacion": user.fecha_creacion,
+        "fecha_actualizacion": user.fecha_actualizacion,
+        "permisos": permisos,
+    }
 
 # ==========================================
 # ASIGNAR ACCESOS

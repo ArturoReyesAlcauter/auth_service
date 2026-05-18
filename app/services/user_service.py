@@ -6,6 +6,7 @@ from tortoise.exceptions import IntegrityError
 from app.core.security import get_password_hash
 from app.models.user import (
     User,
+    EstatusUsuario,
     RegistroPrincipal,
     Modulo,
     Accion,
@@ -91,9 +92,56 @@ async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
     return user
 
 
+
+async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
+    user = await User.get_or_none(id=user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    estatus_usuario = await EstatusUsuario.get_or_none(id=estatus_id)
+
+    if not estatus_usuario:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Estatus de usuario no encontrado.",
+        )
+
+    user.estatus = estatus_usuario
+
+    if estatus_usuario.nombre.lower() == "activo":
+        user.intentos_login = 0
+
+    await user.save()
+    await user.fetch_related("estatus", "instancia")
+
+    return user
+
+
+
+
+
 async def get_users() -> list[User]:
     users = await User.all().prefetch_related("estatus", "instancia")
     return users
+
+
+async def get_user_by_id(user_id: UUID) -> User:
+    user = await User.get_or_none(id=user_id).prefetch_related(
+        "estatus",
+        "instancia",
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    return user
 
 
 async def assign_user_registro(
