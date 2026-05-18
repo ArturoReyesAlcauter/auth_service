@@ -42,6 +42,7 @@ class User(Model):
 
     correo_electronico = fields.CharField(max_length=200, unique=True)
     curp = fields.CharField(max_length=18, unique=True)
+    entidad_federativa_id = fields.IntField(null=True, description="ID de la entidad federativa obtenido desde el catálogo externo")
     numero_telefono = fields.CharField(max_length=15, null=True)
 
     contrasena_hasheada = fields.CharField(max_length=200)

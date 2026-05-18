@@ -15,6 +15,7 @@ from app.models.user import (
 )
 from app.schemas.user import (
     UserCreate,
+    UserUpdate,
     UsuarioRegistroCreate,
     UsuarioModuloCreate,
     UsuarioAccionCreate,
@@ -38,6 +39,55 @@ async def create_user(user_in: UserCreate) -> User:
     user_data["contrasena_hasheada"] = get_password_hash(user_in.password)
 
     user = await User.create(**user_data)
+    return user
+
+
+async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
+    user = await User.get_or_none(id=user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    update_data = user_in.model_dump(exclude_unset=True)
+
+    nuevo_correo = update_data.get("correo_electronico")
+    if nuevo_correo:
+        correo_duplicado = await User.filter(
+            correo_electronico=nuevo_correo
+        ).exclude(id=user_id).exists()
+
+        if correo_duplicado:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El correo ya está registrado en otro usuario.",
+            )
+
+    nueva_curp = update_data.get("curp")
+    if nueva_curp:
+        curp_duplicada = await User.filter(
+            curp=nueva_curp
+        ).exclude(id=user_id).exists()
+
+        if curp_duplicada:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="La CURP ya está registrada en otro usuario.",
+            )
+
+    password = update_data.pop("password", None)
+
+    if password:
+        update_data["contrasena_hasheada"] = get_password_hash(password)
+
+    for field, value in update_data.items():
+        setattr(user, field, value)
+
+    await user.save()
+    await user.fetch_related("estatus", "instancia")
+
     return user
 
 

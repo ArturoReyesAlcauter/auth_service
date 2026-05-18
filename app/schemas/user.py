@@ -38,11 +38,38 @@ class UserCreate(BaseModel):
     correo_electronico: EmailStr = Field(..., max_length=200)
     curp: str = Field(..., min_length=18, max_length=18)
 
+    entidad_federativa_id: int = Field(
+        ...,
+        gt=0,
+        description="ID de la entidad federativa obtenido desde el catálogo externo"
+    )
+    
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
     password: str = Field(..., min_length=8)
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None
+
+class UserUpdate(BaseModel):
+    nombre: Optional[str] = Field(default=None, max_length=100)
+    primer_apellido: Optional[str] = Field(default=None, max_length=100)
+    segundo_apellido: Optional[str] = Field(default=None, max_length=100)
+
+    correo_electronico: Optional[EmailStr] = Field(default=None, max_length=200)
+    curp: Optional[str] = Field(default=None, min_length=18, max_length=18)
+
+    entidad_federativa_id: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description="ID de la entidad federativa obtenido desde el catálogo externo",
+    )
+
+    numero_telefono: Optional[str] = Field(default=None, max_length=15)
+    password: Optional[str] = Field(default=None, min_length=8)
+
+    estatus_id: Optional[int] = None
+    instancia_id: Optional[int] = None
+
 
 
 class UserRead(BaseModel):
@@ -54,6 +81,7 @@ class UserRead(BaseModel):
 
     correo_electronico: EmailStr
     curp: str
+    entidad_federativa_id: Optional[int] = None
     numero_telefono: Optional[str] = None
 
     is_2fa_enabled: bool
@@ -77,6 +105,7 @@ class UserListPublic(BaseModel):
     segundo_apellido: Optional[str] = None
     correo_electronico: EmailStr
     curp: str
+    entidad_federativa_id: Optional[int] = None
     numero_telefono: Optional[str] = None
 
     estatus: Optional[EstatusUsuarioRead] = None

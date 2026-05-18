@@ -1,0 +1,85 @@
+2. Sincronizar dependencias con uv
+uv sync
+3. Activar el entorno virtual
+
+En CMD:
+
+.venv\Scripts\activate.bat
+
+Debe verse algo así:
+
+(auth_service) C:\Users\artur\Documents\Proyectos FastAPI\auth_service>
+
+Si sigue apareciendo (api-mp), no pasa nada mientras esto muestre la ruta correcta:
+
+echo %VIRTUAL_ENV%
+
+Debe salir:
+
+C:\Users\artur\Documents\Proyectos FastAPI\auth_service\.venv
+4. Crear archivo .env
+
+Si no existe, créalo:
+
+notepad .env
+
+Contenido recomendado para PostgreSQL local:
+
+PROJECT_NAME="Login PorTusDerechos"
+VERSION="1.0.0"
+
+DATABASE_URL="postgres://postgres:TU_PASSWORD@127.0.0.1:5432/auth_service_db"
+
+SECRET_KEY="CAMBIA_ESTA_CLAVE_POR_UNA_LARGA_Y_SEGURA"
+ALGORITHM="HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES=120
+
+Ejemplo usando tu base local:
+
+DATABASE_URL="postgres://postgres:12A08007449@127.0.0.1:5432/auth_service_db"
+5. Crear base de datos en pgAdmin
+
+
+8. Inicializar Aerich
+
+Solo la primera vez en una PC nueva:
+
+aerich init -t app.core.config.TORTOISE_ORM
+
+Si dice que ya está inicializado:
+
+Aerich config pyproject.toml already inited.
+
+No pasa nada.
+
+9. Crear tablas en la base de datos
+
+Primera vez, si todavía no existen tablas:
+
+aerich init-db
+
+Si te dice:
+
+App 'models' is already initialized. Delete migrations\models and try again.
+
+Ejecuta:
+
+rmdir /S /Q migrations\models
+aerich init-db
+10. Ejecutar seed
+uv run python seed.py
+
+O si el entorno ya está activado:
+
+python seed.py
+11. Levantar el proyecto
+
+Recomendado:
+
+uv run uvicorn app.main:app --reload --port 8001
+
+O también:
+
+uvicorn app.main:app --reload --port 8001
+12. Abrir documentación
+http://127.0.0.1:8001/docs

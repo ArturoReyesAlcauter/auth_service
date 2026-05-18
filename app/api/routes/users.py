@@ -7,6 +7,7 @@ from app.models.user import User
 from app.schemas.user import (
     UserCreate,
     UserRead,
+    UserUpdate,
     UserListPublic,
     UsuarioRegistroCreate,
     UsuarioRegistroRead,
@@ -39,6 +40,33 @@ async def crear_usuario(
     await user.fetch_related("estatus", "instancia")
     return user
 
+@router.patch(
+    "/{user_id}",
+    response_model=UserRead,
+    status_code=status.HTTP_200_OK,
+)
+async def modificar_usuario(
+    user_id: UUID,
+    user_in: UserUpdate,
+    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+):
+    """
+    Modifica los datos generales de un usuario.
+
+    Permite actualizar:
+    - nombre
+    - apellidos
+    - correo electrónico
+    - CURP
+    - entidad federativa
+    - teléfono
+    - contraseña
+    - estatus
+    - instancia
+
+    No modifica permisos, grupos, módulos ni acciones.
+    """
+    return await user_service.update_user(user_id, user_in)
 
 @router.get(
     "",
@@ -98,24 +126,6 @@ async def asignar_grupo_usuario(
     """
     return await user_service.assign_user_registro(user_id, data)
 
-
-@router.post(
-    "/{user_id}/registros",
-    response_model=UsuarioRegistroRead,
-    status_code=status.HTTP_201_CREATED,
-)
-async def asignar_registro_usuario_compatibilidad(
-    user_id: UUID,
-    data: UsuarioRegistroCreate,
-    current_user: User = Depends(requiere_accion("ASIGNAR_GRUPOS_USUARIO")),
-):
-    """
-    Ruta temporal de compatibilidad.
-
-    Usa /users/{user_id}/grupos en nuevos desarrollos.
-    Internamente, registro = grupo.
-    """
-    return await user_service.assign_user_registro(user_id, data)
 
 
 @router.post(
