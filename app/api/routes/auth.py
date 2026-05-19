@@ -3,7 +3,8 @@ from typing import Annotated
 import io
 import qrcode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from app.services.rate_limit_service import verificar_rate_limit
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -62,6 +63,7 @@ async def generar_payload_usuario(user: User) -> dict:
 
 @router.post("/login")
 async def login_access_token(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()]
 ):
     """
@@ -70,8 +72,20 @@ async def login_access_token(
     No entrega JWT todavía.
     Entrega un ID temporal para el segundo paso.
     """
+
+    ip_cliente = request.client.host if request.client else "unknown"
+   
+
+    verificar_rate_limit(
+        key=f"login:ip:{ip_cliente}",
+        max_intentos=20,
+        ventana_segundos=60,
+        mensaje="Demasiados intentos de inicio de sesión desde esta IP. Intenta de nuevo en un momento.",
+    )
+
+
     user = await auth_service.authenticate_user(
-        curp=form_data.username,
+        curp=form_data.username.upper().strip(),
         password=form_data.password,
     )
 
@@ -87,11 +101,8 @@ async def login_access_token(
             detail="Usuario inactivo",
         )
 
-    # Validamos última sesión.
-    # Si pasaron más de 90 días, se eliminan accesos y se niega el login.
     await validar_ultima_sesion_o_revocar(user)
 
-    # Identificamos si necesita configurar o solo validar
     if user.is_2fa_enabled:
         return {
             "status": "pending_2fa",
@@ -105,14 +116,26 @@ async def login_access_token(
         "message": "Es obligatorio configurar la seguridad de 2 pasos.",
     }
 
-
 # --- 2. LOGIN PASO 2: Validar el código 2FA ---
 
 @router.post("/login/2fa", response_model=Token)
-async def login_verify_2fa(data: Verify2FA):
+async def login_verify_2fa(
+    request: Request,
+    data: Verify2FA,
+):
     """
     Paso 2: Verifica el código TOTP y entrega el JWT final.
     """
+
+    ip_cliente = request.client.host if request.client else "unknown"
+
+    verificar_rate_limit(
+        key=f"login_2fa:ip:{ip_cliente}",
+        max_intentos=20,
+        ventana_segundos=60,
+        mensaje="Demasiados intentos de verificación 2FA desde esta IP.",
+    )
+
     user = await User.get_or_none(id=data.user_id).prefetch_related(
         "estatus",
         "instancia",
@@ -135,13 +158,8 @@ async def login_verify_2fa(data: Verify2FA):
     payload = await generar_payload_usuario(user)
     access_token = create_access_token(data=payload)
 
-    # Generar y guardar Refresh Token
-    refresh_token_str, expire_dt = create_refresh_token({"sub": str(user.id)}, expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    await auth_service.store_refresh_token(user.id, refresh_token_str, expire_dt)
-
     return Token(
         access_token=access_token,
-        refresh_token=refresh_token_str,
         token_type="bearer",
     )
 
@@ -149,15 +167,19 @@ async def login_verify_2fa(data: Verify2FA):
 # --- RUTAS DE CONFIGURACIÓN ---
 
 @router.post("/setup")
-async def setup_2fa(data: Setup2FA):
-    """
-    Genera el secreto y devuelve un código QR.
+async def setup_2fa(
+    request: Request,
+    data: Setup2FA,
+):
+    ip_cliente = request.client.host if request.client else "unknown"
 
-    Igual que tu proyecto anterior:
-    - No devuelve JSON.
-    - Devuelve directamente image/png.
-    - Swagger muestra el QR como imagen.
-    """
+    verificar_rate_limit(
+        key=f"setup_2fa:ip:{ip_cliente}",
+        max_intentos=10,
+        ventana_segundos=60,
+        mensaje="Demasiadas solicitudes para configurar 2FA desde esta IP.",
+    )
+
     user = await User.get_or_none(id=data.user_id).prefetch_related(
         "estatus",
         "instancia",
@@ -175,7 +197,6 @@ async def setup_2fa(data: Setup2FA):
             detail="2FA ya está activado.",
         )
 
-    # Generar secreto
     secret = auth_service.generate_totp_secret()
     user.totp_secret = secret
     await user.save()
@@ -197,51 +218,27 @@ async def setup_2fa(data: Setup2FA):
 
 
 @router.post("/enable", response_model=Token)
-async def enable_2fa(data: Verify2FA):
+async def enable_2fa(
+    request: Request,
+    data: Verify2FA,
+):
     """
     Verifica el primer código para activar el 2FA definitivamente
     y entrega el primer token de acceso.
     """
+
+    ip_cliente = request.client.host if request.client else "unknown"
+
+    verificar_rate_limit(
+        key=f"enable_2fa:ip:{ip_cliente}",
+        max_intentos=20,
+        ventana_segundos=60,
+        mensaje="Demasiados intentos para activar 2FA desde esta IP. Intenta de nuevo en un momento.",
+    )
+
     user = await User.get_or_none(id=data.user_id).prefetch_related(
         "estatus",
         "instancia",
-    )
-
-    if not user or not usuario_esta_activo(user):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Usuario inválido.",
-        )
-
-    if not user.totp_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Primero debes generar el QR (setup).",
-        )
-
-    is_valid = auth_service.verify_totp_code(user.totp_secret, data.code)
-
-    if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Código inválido. Intenta de nuevo.",
-        )
-
-    # Activamos el 2FA oficialmente
-    user.is_2fa_enabled = True
-    await user.save()
-
-    # Entregamos token para que el usuario no tenga que loguearse de nuevo tras activar
-    payload = await generar_payload_usuario(user)
-    access_token = create_access_token(data=payload)
-
-    refresh_token_str, expire_dt = create_refresh_token({"sub": str(user.id)}, expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    await auth_service.store_refresh_token(user.id, refresh_token_str, expire_dt)
-
-    return Token(
-        access_token=access_token,
-        refresh_token=refresh_token_str,
-        token_type="bearer",
     )
 
 # --- ROTACIÓN DE REFRESH TOKEN ---
