@@ -93,7 +93,6 @@ async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
     return user
 
 
-
 async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
     user = await User.get_or_none(id=user_id)
 
@@ -111,24 +110,29 @@ async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
             detail="Estatus de usuario no encontrado.",
         )
 
+    # 1. Aplicamos los cambios al objeto en memoria
     user.estatus = estatus_usuario
-
     if estatus_usuario.nombre.lower() == "activo":
         user.intentos_login = 0
 
-    await user.save()
+    # 2. Guardamos SOLO los campos que modificamos en memoria
+    await user.save(update_fields=["estatus_id", "intentos_login"])
+
+    # 3. Incrementamos la versión del token de forma atómica directo en la DB
+    await User.filter(id=user_id).update(
+        token_version=F("token_version") + 1
+    )
+
+    # 4. Refrescamos el objeto local con los últimos datos de la DB (incluyendo la nueva versión)
+    await user.refresh_from_db()
     await user.fetch_related("estatus", "instancia")
 
     return user
 
 
-
-
-
 async def get_users() -> list[User]:
     users = await User.all().prefetch_related("estatus", "instancia")
     return users
-
 
 async def get_user_by_id(user_id: UUID) -> User:
     user = await User.get_or_none(id=user_id).prefetch_related(
@@ -189,7 +193,6 @@ async def assign_user_registro(
             status_code=status.HTTP_409_CONFLICT,
             detail="Este usuario ya tiene asignado ese grupo.",
         )
-
 
 async def assign_user_modulo(
     user_id: UUID,
@@ -274,6 +277,7 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
     - elimina acciones asignadas que pertenezcan a módulos de ese grupo
     - elimina módulos asignados que pertenezcan a ese grupo
     - elimina la relación usuario-registro
+    - INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS
 
     No elimina catálogos.
     No elimina el usuario.
@@ -335,6 +339,9 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
     # 5. Eliminar el registro/grupo asignado al usuario
     await asignacion.delete()
 
+    # 6. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
+    await User.filter(id=user_id).update(token_version=F("token_version") + 1)
+
     return {
         "message": "Acceso al grupo removido correctamente.",
         "user_id": str(user_id),
@@ -351,6 +358,7 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
     Cascada lógica:
     - elimina acciones asignadas que pertenezcan a ese módulo
     - elimina la relación usuario-módulo
+    - INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS
 
     No elimina el registro/grupo padre.
     No elimina catálogos.
@@ -400,6 +408,9 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
     # 3. Eliminar módulo asignado al usuario
     await asignacion.delete()
 
+    # 4. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
+    await User.filter(id=user_id).update(token_version=F("token_version") + 1)
+
     return {
         "message": "Acceso al módulo removido correctamente.",
         "user_id": str(user_id),
@@ -415,6 +426,7 @@ async def remove_user_accion(user_id: UUID, accion_id: UUID):
 
     No elimina la acción del catálogo.
     Solo elimina la relación en usuario_acciones.
+    INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -444,7 +456,11 @@ async def remove_user_accion(user_id: UUID, accion_id: UUID):
             detail="El usuario no tiene asignada esta acción.",
         )
 
+    # 1. Eliminar la asignación de la acción
     await asignacion.delete()
+
+    # 2. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
+    await User.filter(id=user_id).update(token_version=F("token_version") + 1)
 
     return {
         "message": "Acceso a la acción removido correctamente.",
@@ -452,13 +468,11 @@ async def remove_user_accion(user_id: UUID, accion_id: UUID):
         "accion_id": str(accion_id),
     }
 
-
 async def usuario_tiene_accion(user_id: UUID, accion_nombre: str) -> bool:
     return await UsuarioAccion.filter(
         usuario_id=user_id,
         accion__nombre=accion_nombre,
     ).exists()
-
 
 async def obtener_permisos_usuario(user_id: UUID) -> dict:
     registros_asignados = await UsuarioRegistro.filter(
