@@ -268,10 +268,15 @@ async def assign_user_accion(
 
 async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
     """
-    Quita a un usuario el acceso a un grupo.
+    Quita a un usuario el acceso a un grupo/registro.
 
-    No elimina el grupo del catálogo.
-    Solo elimina la relación en usuario_registros.
+    Cascada lógica:
+    - elimina acciones asignadas que pertenezcan a módulos de ese grupo
+    - elimina módulos asignados que pertenezcan a ese grupo
+    - elimina la relación usuario-registro
+
+    No elimina catálogos.
+    No elimina el usuario.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -301,21 +306,55 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
             detail="El usuario no tiene asignado este grupo.",
         )
 
+    # 1. Obtener IDs de módulos que pertenecen al grupo
+    modulo_ids = await Modulo.filter(
+        registro_principal_id=grupo_id,
+    ).values_list("id", flat=True)
+
+    # 2. Obtener IDs de acciones que pertenecen a esos módulos
+    accion_ids = await Accion.filter(
+        modulo_id__in=modulo_ids,
+    ).values_list("id", flat=True)
+
+    # 3. Eliminar acciones asignadas al usuario que pertenecen al grupo
+    acciones_eliminadas = 0
+    if accion_ids:
+        acciones_eliminadas = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion_id__in=accion_ids,
+        ).delete()
+
+    # 4. Eliminar módulos asignados al usuario que pertenecen al grupo
+    modulos_eliminados = 0
+    if modulo_ids:
+        modulos_eliminados = await UsuarioModulo.filter(
+            usuario_id=user_id,
+            modulo_id__in=modulo_ids,
+        ).delete()
+
+    # 5. Eliminar el registro/grupo asignado al usuario
     await asignacion.delete()
 
     return {
         "message": "Acceso al grupo removido correctamente.",
         "user_id": str(user_id),
         "grupo_id": str(grupo_id),
+        "acciones_eliminadas": acciones_eliminadas,
+        "modulos_eliminados": modulos_eliminados,
+        "grupo_eliminado": True,
     }
-
 
 async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
     """
     Quita a un usuario el acceso a un módulo.
 
-    No elimina el módulo del catálogo.
-    Solo elimina la relación en usuario_modulos.
+    Cascada lógica:
+    - elimina acciones asignadas que pertenezcan a ese módulo
+    - elimina la relación usuario-módulo
+
+    No elimina el registro/grupo padre.
+    No elimina catálogos.
+    No elimina el usuario.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -345,14 +384,30 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
             detail="El usuario no tiene asignado este módulo.",
         )
 
+    # 1. Obtener acciones del módulo
+    accion_ids = await Accion.filter(
+        modulo_id=modulo_id,
+    ).values_list("id", flat=True)
+
+    # 2. Eliminar acciones asignadas al usuario de ese módulo
+    acciones_eliminadas = 0
+    if accion_ids:
+        acciones_eliminadas = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion_id__in=accion_ids,
+        ).delete()
+
+    # 3. Eliminar módulo asignado al usuario
     await asignacion.delete()
 
     return {
         "message": "Acceso al módulo removido correctamente.",
         "user_id": str(user_id),
         "modulo_id": str(modulo_id),
+        "acciones_eliminadas": acciones_eliminadas,
+        "modulo_eliminado": True,
+        "registro_padre_eliminado": False,
     }
-
 
 async def remove_user_accion(user_id: UUID, accion_id: UUID):
     """
@@ -452,6 +507,30 @@ async def get_catalogo_permisos():
     )
 
     return registros
+
+
+
+
+async def get_catalogo_permisos_por_registro(registro_id: UUID):
+    """
+    Devuelve módulos y acciones de un registro/grupo específico.
+    """
+
+    registro = await RegistroPrincipal.get_or_none(
+        id=registro_id
+    ).prefetch_related(
+        "modulos",
+        "modulos__acciones",
+    )
+
+    if not registro:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Registro o grupo no encontrado.",
+        )
+
+    return registro
+
 
 
 # ==========================================

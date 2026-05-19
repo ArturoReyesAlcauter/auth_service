@@ -27,6 +27,30 @@ ADMIN_EMAIL = "admin@portusderechos.gob.mx"
 ADMIN_ENTIDAD_FEDERATIVA_ID = 9
 
 
+async def asegurar_estatus_usuario(id_estatus: int, nombre: str) -> EstatusUsuario:
+    """
+    Crea o actualiza un estatus de usuario con ID fijo.
+    Esto asegura que el catálogo siempre tenga los IDs esperados:
+    1 = Activo
+    2 = En Proceso
+    3 = Inactivo
+    4 = Intentos en exceso sesión
+    """
+
+    estatus, _ = await EstatusUsuario.get_or_create(
+        id=id_estatus,
+        defaults={
+            "nombre": nombre,
+        },
+    )
+
+    if estatus.nombre != nombre:
+        estatus.nombre = nombre
+        await estatus.save(update_fields=["nombre"])
+
+    return estatus
+
+
 async def main():
     await Tortoise.init(config=TORTOISE_ORM)
 
@@ -36,12 +60,25 @@ async def main():
     # 1. ESTATUS DE USUARIO
     # ==========================================
 
-    estatus_activo, _ = await EstatusUsuario.get_or_create(
-        nombre="Activo"
+    estatus_activo = await asegurar_estatus_usuario(
+        id_estatus=1,
+        nombre="Activo",
     )
 
-    await EstatusUsuario.get_or_create(nombre="En Proceso")
-    await EstatusUsuario.get_or_create(nombre="Inactivo")
+    await asegurar_estatus_usuario(
+        id_estatus=2,
+        nombre="En Proceso",
+    )
+
+    await asegurar_estatus_usuario(
+        id_estatus=3,
+        nombre="Inactivo",
+    )
+
+    await asegurar_estatus_usuario(
+        id_estatus=4,
+        nombre="Intentos en exceso sesión",
+    )
 
     # ==========================================
     # 2. INSTANCIAS
@@ -237,15 +274,12 @@ async def main():
         "VER_USUARIO_DETALLE",
         "ACTUALIZAR_USUARIO",
         "DESACTIVAR_USUARIO",
-
         "VER_GRUPOS_USUARIO",
         "VER_MODULOS_USUARIO",
         "VER_ACCIONES_USUARIO",
-
         "ASIGNAR_GRUPOS_USUARIO",
         "ASIGNAR_MODULOS_USUARIO",
         "ASIGNAR_ACCIONES_USUARIO",
-
         "QUITAR_GRUPOS_USUARIO",
         "QUITAR_MODULOS_USUARIO",
         "QUITAR_ACCIONES_USUARIO",
@@ -299,6 +333,7 @@ async def main():
 
         admin.estatus = estatus_activo
         admin.instancia = instancia_sndif
+        admin.intentos_login = 0
 
         await admin.save()
 
@@ -321,6 +356,7 @@ async def main():
 
             estatus=estatus_activo,
             instancia=instancia_sndif,
+            intentos_login=0,
         )
 
     # ==========================================
@@ -358,6 +394,12 @@ async def main():
     else:
         print("Usuario administrador actualizado.")
 
+    print("")
+    print("Estatus de usuario:")
+    print("- 1 Activo")
+    print("- 2 En Proceso")
+    print("- 3 Inactivo")
+    print("- 4 Intentos en exceso sesión")
     print("")
     print("Usuario administrador predeterminado:")
     print(f"CURP: {ADMIN_CURP}")

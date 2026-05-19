@@ -61,6 +61,7 @@ async def cambiar_estatus_usuario(
     - 1 = Activo
     - 2 = En Proceso
     - 3 = Inactivo
+    - 4 = Intentos en exceso sesión
     """
     return await user_service.cambiar_estatus_usuario(
         user_id=user_id,
@@ -159,6 +160,49 @@ async def listar_catalogo_permisos(
     asignar a un usuario sin buscar IDs manualmente.
     """
     return await user_service.get_catalogo_permisos()
+
+
+
+
+
+# ==========================================
+# CATÁLOGO DE PERMISOS
+# ==========================================
+
+@router.get(
+    "/catalogo-permisos",
+    response_model=list[RegistroCatalogoRead],
+    status_code=status.HTTP_200_OK,
+)
+async def listar_catalogo_permisos(
+    current_user: User = Depends(requiere_accion("VER_USUARIOS")),
+):
+    """
+    Devuelve todo el catálogo de permisos disponible.
+    """
+    return await user_service.get_catalogo_permisos()
+
+
+@router.get(
+    "/catalogo-permisos/{registro_id}",
+    response_model=RegistroCatalogoRead,
+    status_code=status.HTTP_200_OK,
+)
+async def obtener_catalogo_permisos_por_registro(
+    registro_id: UUID,
+    current_user: User = Depends(requiere_accion("VER_USUARIOS")),
+):
+    """
+    Devuelve el catálogo de permisos de un registro/grupo específico.
+
+    Respuesta:
+    - registro/grupo
+        - módulos
+            - acciones
+    """
+    return await user_service.get_catalogo_permisos_por_registro(registro_id)
+
+
 
 
 # ==========================================

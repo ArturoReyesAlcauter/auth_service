@@ -33,5 +33,5 @@ register_tortoise(
 @app.get("/")
 async def root():
     return {
-        "message": "Auth Service funcionando correctamente. Ve a /docs para la documentación."
+        "message": "Login Sistema de información Por Tus Derechos. Ve a /docs para la documentación."
     }
