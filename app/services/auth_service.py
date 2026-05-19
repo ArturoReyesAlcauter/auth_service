@@ -1,8 +1,10 @@
 import pyotp
 
-from app.core.security import verify_password
+from app.core.security import verify_password, get_password_hash
 from fastapi import HTTPException, status
-from app.models.user import User
+from tortoise.expressions import F
+from app.models.user import User, EstatusUsuario
+
 
 MAX_INTENTOS_LOGIN = 5
 
@@ -21,6 +23,9 @@ async def authenticate_user(curp: str, password: str):
     )
 
     if not user:
+        # 1. MITIGACIÓN DE TIMING ATTACK
+        # Generamos un hash con la contraseña recibida aunque el usuario no exista.
+        get_password_hash(password)
         return None
 
     if user.intentos_login >= MAX_INTENTOS_LOGIN:
@@ -30,16 +35,46 @@ async def authenticate_user(curp: str, password: str):
         )
 
     if not verify_password(password, user.contrasena_hasheada):
-        user.intentos_login += 1
-        await user.save(update_fields=["intentos_login"])
+        # 2. MITIGACIÓN DE RACE CONDITION
+        # Sumamos el intento directamente en la DB
+        await User.filter(id=user.id).update(intentos_login=F("intentos_login") + 1)
+        
+        # Refrescamos el objeto local para tener el contador real
+        await user.refresh_from_db(fields=["intentos_login"])
 
+        # 3. VERIFICACIÓN Y CAMBIO DE ESTATUS POR BLOQUEO
+        if user.intentos_login >= MAX_INTENTOS_LOGIN:
+            estatus_bloqueado = await EstatusUsuario.get_or_none(
+                nombre__iexact="Intentos en exceso sesión"
+            )
+
+            if not estatus_bloqueado:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="No existe el estatus 'Intentos en exceso sesión' en cat_estatus_usuarios.",
+                )
+
+            # Asignamos el nuevo estatus en memoria
+            user.estatus = estatus_bloqueado
+
+            # Guardamos únicamente el campo estatus_id, ya que los intentos se guardaron antes con F()
+            await user.save(update_fields=["estatus_id"])
+            
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario bloqueado por exceder el número máximo de intentos de inicio de sesión.",
+            )
+
+        # 4. CALCULAR INTENTOS RESTANTES SI AÚN NO SE BLOQUEA
         intentos_restantes = MAX_INTENTOS_LOGIN - user.intentos_login
+        intentos_restantes = max(0, intentos_restantes)
 
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"CURP o contraseña incorrectos. Intentos restantes: {intentos_restantes}",
         )
 
+    # 5. SI LA CONTRASEÑA ES CORRECTA Y HABÍA INTENTOS FALLIDOS, RESETEAMOS A 0
     if user.intentos_login != 0:
         user.intentos_login = 0
         await user.save(update_fields=["intentos_login"])
