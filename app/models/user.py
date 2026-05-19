@@ -76,6 +76,24 @@ class User(Model):
         table = "usuarios"
 
 
+class UltimaSesion(Model):
+    id = fields.UUIDField(pk=True, default=uuid.uuid4)
+
+    usuario = fields.OneToOneField(
+        "models.User",
+        related_name="ultima_sesion",
+        on_delete=fields.CASCADE
+    )
+
+    fecha_inicio_sesion = fields.DatetimeField(null=True)
+
+    fecha_creacion = fields.DatetimeField(auto_now_add=True)
+    fecha_actualizacion = fields.DatetimeField(auto_now=True)
+
+    class Meta:
+        table = "ultima_sesion"
+
+
 class TokenUsuario(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
 

@@ -199,3 +199,95 @@ class PermisosUsuarioRead(BaseModel):
 
 class UserWithPermissionsRead(UserRead):
     permisos: PermisosUsuarioRead
+
+    # ==========================================
+# CATÁLOGO COMPLETO DE PERMISOS
+# ==========================================
+# Estos schemas sirven para devolver el árbol completo:
+#
+# Registro / Grupo
+#   -> Módulos
+#       -> Acciones
+#
+# Este árbol se usa para que el frontend pueda mostrar todos los permisos
+# disponibles sin tener que consultar manualmente la base de datos.
+
+
+class AccionCatalogoRead(BaseModel):
+    # ID de la acción.
+    # Ejemplo: permiso para crear, leer, aprobar, editar, etc.
+    id: UUID
+
+    # Nombre técnico de la acción.
+    # Ejemplo: MP_CREAR_REGISTRO, VER_USUARIOS, ASIGNAR_ACCIONES_USUARIO
+    nombre: str
+
+    # Descripción legible de lo que permite hacer esta acción.
+    descripcion: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModuloCatalogoRead(BaseModel):
+    # ID del módulo.
+    # Ejemplo: EXPEDIENTES, SECCIONES, ADMINISTRACION_USUARIOS
+    id: UUID
+
+    # Nombre del módulo.
+    nombre: str
+
+    # Descripción del módulo.
+    descripcion: Optional[str] = None
+
+    # Lista de acciones que pertenecen a este módulo.
+    acciones: List[AccionCatalogoRead] = []
+
+    class Config:
+        from_attributes = True
+
+
+class RegistroCatalogoRead(BaseModel):
+    # ID del registro o grupo principal.
+    # Ejemplo: MP, MH, VF, RNCAS
+    id: UUID
+
+    # Nombre corto del registro/grupo.
+    nombre: str
+
+    # Descripción del registro/grupo.
+    descripcion: Optional[str] = None
+
+    # Lista de módulos que pertenecen a este registro/grupo.
+    modulos: List[ModuloCatalogoRead] = []
+
+    class Config:
+        from_attributes = True
+
+
+# ==========================================
+# ASIGNACIÓN MASIVA DE PERMISOS
+# ==========================================
+# Este schema permite asignar a un usuario:
+# - un registro/grupo
+# - varios módulos
+# - varias acciones
+#
+# Nota:
+# Si se mandan acciones, el service también asignará automáticamente
+# el módulo padre y el registro padre de esas acciones.
+
+
+class UsuarioPermisosMasivosCreate(BaseModel):
+    # Registro/grupo principal que se quiere asignar.
+    # Es opcional porque podrías asignar solo módulos o acciones,
+    # y el backend detectará automáticamente su registro padre.
+    registro_id: Optional[UUID] = None
+
+    # Lista de módulos que se quieren asignar al usuario.
+    # Puede venir vacía.
+    modulo_ids: List[UUID] = []
+
+    # Lista de acciones que se quieren asignar al usuario.
+    # Puede venir vacía.
+    accion_ids: List[UUID] = []

@@ -1,17 +1,20 @@
 import pyotp
 
 from app.core.security import verify_password
+from fastapi import HTTPException, status
 from app.models.user import User
 
+MAX_INTENTOS_LOGIN = 5
 
 async def authenticate_user(curp: str, password: str):
     """
     Valida CURP y contraseña.
 
-    No genera token.
-    No valida 2FA.
-    Solo devuelve el usuario si las credenciales son correctas.
+    - Si la contraseña es incorrecta, suma intentos_login.
+    - Si llega a 5 intentos, bloquea el login.
+    - Si la contraseña es correcta, reinicia intentos_login a 0.
     """
+
     user = await User.get_or_none(curp=curp).prefetch_related(
         "estatus",
         "instancia",
@@ -20,8 +23,26 @@ async def authenticate_user(curp: str, password: str):
     if not user:
         return None
 
+    if user.intentos_login >= MAX_INTENTOS_LOGIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario bloqueado por exceder el número máximo de intentos de inicio de sesión.",
+        )
+
     if not verify_password(password, user.contrasena_hasheada):
-        return None
+        user.intentos_login += 1
+        await user.save(update_fields=["intentos_login"])
+
+        intentos_restantes = MAX_INTENTOS_LOGIN - user.intentos_login
+
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"CURP o contraseña incorrectos. Intentos restantes: {intentos_restantes}",
+        )
+
+    if user.intentos_login != 0:
+        user.intentos_login = 0
+        await user.save(update_fields=["intentos_login"])
 
     return user
 

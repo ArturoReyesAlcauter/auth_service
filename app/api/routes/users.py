@@ -16,6 +16,8 @@ from app.schemas.user import (
     UsuarioAccionCreate,
     UsuarioAccionRead,
     UserWithPermissionsRead,
+    RegistroCatalogoRead,
+    UsuarioPermisosMasivosCreate,
 )
 from app.services import user_service
 
@@ -64,7 +66,6 @@ async def cambiar_estatus_usuario(
         user_id=user_id,
         estatus_id=estatus_id,
     )
-
 
 
 
@@ -129,6 +130,75 @@ async def obtener_mi_usuario(
         "instancia": current_user.instancia,
         "permisos": permisos,
     }
+
+
+
+# ==========================================
+# CATÁLOGO DE PERMISOS
+# ==========================================
+
+@router.get(
+    "/catalogo-permisos",
+    response_model=list[RegistroCatalogoRead],
+    status_code=status.HTTP_200_OK,
+)
+async def listar_catalogo_permisos(
+    current_user: User = Depends(requiere_accion("VER_USUARIOS")),
+):
+    """
+    Devuelve todo el catálogo de permisos disponible.
+
+    Respuesta:
+    - registros/grupos
+        - módulos
+            - acciones
+
+    Uso:
+    Este endpoint sirve para pintar en el frontend un árbol de permisos.
+    Así el administrador puede seleccionar visualmente qué permisos
+    asignar a un usuario sin buscar IDs manualmente.
+    """
+    return await user_service.get_catalogo_permisos()
+
+
+# ==========================================
+# ASIGNACIÓN MASIVA DE PERMISOS
+# ==========================================
+
+@router.post(
+    "/{user_id}/permisos",
+    status_code=status.HTTP_201_CREATED,
+)
+async def asignar_permisos_masivos_usuario(
+    user_id: UUID,
+    data: UsuarioPermisosMasivosCreate,
+    current_user: User = Depends(requiere_accion("ASIGNAR_ACCIONES_USUARIO")),
+):
+    """
+    Asigna permisos a un usuario de forma masiva.
+
+    Body permitido:
+    {
+      "registro_id": "uuid-opcional-del-registro",
+      "modulo_ids": ["uuid-modulo-1", "uuid-modulo-2"],
+      "accion_ids": ["uuid-accion-1", "uuid-accion-2"]
+    }
+
+    Reglas:
+    - Si mandas solo registro_id, asigna el registro/grupo.
+    - Si mandas módulos, asigna esos módulos y su registro padre.
+    - Si mandas acciones, asigna esas acciones, sus módulos padre
+      y sus registros padre.
+    - Si algo ya estaba asignado, no duplica ni marca error.
+    """
+    return await user_service.assign_user_permisos_masivos(
+        user_id=user_id,
+        data=data,
+    )
+
+
+
+
 
 @router.get(
     "/{user_id}",

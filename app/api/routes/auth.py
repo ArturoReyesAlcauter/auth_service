@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from app.schemas.token import Token
 from app.services import auth_service
+from app.services.session_service import validar_ultima_sesion_o_revocar
 from app.core.security import create_access_token
 from app.models.user import User, UsuarioAccion
 
@@ -82,6 +83,10 @@ async def login_access_token(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Usuario inactivo",
         )
+
+    # Validamos última sesión.
+    # Si pasaron más de 90 días, se eliminan accesos y se niega el login.
+    await validar_ultima_sesion_o_revocar(user)
 
     # Identificamos si necesita configurar o solo validar
     if user.is_2fa_enabled:
