@@ -8,11 +8,13 @@ from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.schemas.token import Token
+from app.schemas.token import Token, RefreshTokenRequest
 from app.services import auth_service
 from app.services.session_service import validar_ultima_sesion_o_revocar
-from app.core.security import create_access_token
+from app.core.security import create_access_token, create_refresh_token, decode_access_token
 from app.models.user import User, UsuarioAccion
+from app.models.user import TokenUsuario
+from app.core.config import settings
 
 
 router = APIRouter(tags=["Autenticación"])
@@ -133,8 +135,13 @@ async def login_verify_2fa(data: Verify2FA):
     payload = await generar_payload_usuario(user)
     access_token = create_access_token(data=payload)
 
+    # Generar y guardar Refresh Token
+    refresh_token_str, expire_dt = create_refresh_token({"sub": str(user.id)}, expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    await auth_service.store_refresh_token(user.id, refresh_token_str, expire_dt)
+
     return Token(
         access_token=access_token,
+        refresh_token=refresh_token_str,
         token_type="bearer",
     )
 
@@ -228,7 +235,73 @@ async def enable_2fa(data: Verify2FA):
     payload = await generar_payload_usuario(user)
     access_token = create_access_token(data=payload)
 
+    refresh_token_str, expire_dt = create_refresh_token({"sub": str(user.id)}, expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    await auth_service.store_refresh_token(user.id, refresh_token_str, expire_dt)
+
     return Token(
         access_token=access_token,
+        refresh_token=refresh_token_str,
         token_type="bearer",
     )
+
+# --- ROTACIÓN DE REFRESH TOKEN ---
+
+@router.post("/refresh", response_model=Token)
+async def refresh_access_token(data: RefreshTokenRequest):
+    """
+    Recibe un refresh_token válido, lo revoca (rotación) y devuelve 
+    un nuevo Access Token y un nuevo Refresh Token.
+    """
+    # 1. Validar criptográficamente el token
+    try:
+        payload = decode_access_token(data.refresh_token)
+        user_id = payload.get("sub")
+        if not user_id or payload.get("type") != "refresh":
+            raise ValueError()
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token inválido o expirado.",
+        )
+
+    # 2. Validar que exista en la base de datos (no haya sido revocado / logged out)
+    token_db = await TokenUsuario.get_or_none(token=data.refresh_token, tipo="REFRESH_TOKEN")
+    if not token_db:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión revocada o inexistente.",
+        )
+
+    # 3. Validar estado del usuario
+    user = await User.get_or_none(id=user_id).prefetch_related("estatus", "instancia")
+    if not user or not usuario_esta_activo(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario inactivo o suspendido.",
+        )
+
+    # 4. Rotación del Token: Eliminar el viejo para evitar re-uso
+    await token_db.delete()
+
+    # 5. Emitir nuevos tokens
+    new_payload = await generar_payload_usuario(user)
+    new_access_token = create_access_token(data=new_payload)
+    
+    new_refresh_str, expire_dt = create_refresh_token({"sub": str(user.id)}, expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    await auth_service.store_refresh_token(user.id, new_refresh_str, expire_dt)
+
+    return Token(
+        access_token=new_access_token,
+        refresh_token=new_refresh_str,
+        token_type="bearer"
+    )
+
+# --- CERRAR SESIÓN ---
+
+@router.post("/logout", status_code=status.HTTP_200_OK)
+async def logout(data: RefreshTokenRequest):
+    """
+    Invalida el refresh_token en la base de datos, cerrando la sesión de ese dispositivo.
+    """
+    await auth_service.revoke_refresh_token(data.refresh_token)
+    return {"message": "Sesión cerrada correctamente."}

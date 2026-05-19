@@ -1,9 +1,13 @@
 import pyotp
 
-from app.core.security import verify_password, get_password_hash
 from fastapi import HTTPException, status
 from tortoise.expressions import F
+from datetime import datetime
+from uuid import UUID
+
+from app.core.security import verify_password, get_password_hash
 from app.models.user import User, EstatusUsuario
+from app.models.user import TokenUsuario
 
 
 MAX_INTENTOS_LOGIN = 5
@@ -137,3 +141,16 @@ def verify_totp_code(secret: str | None, code: str) -> bool:
 # Alias opcional por si en otro archivo ya estabas usando verify_totp
 def verify_totp(secret: str | None, code: str) -> bool:
     return verify_totp_code(secret, code)
+
+async def store_refresh_token(user_id: UUID, token: str, expire_date: datetime):
+    """Guarda el refresh token en la base de datos para control de sesiones."""
+    await TokenUsuario.create(
+        usuario_id=user_id,
+        token=token,
+        tipo="REFRESH_TOKEN",
+        fecha_expiracion=expire_date
+    )
+
+async def revoke_refresh_token(token: str):
+    """Invalida un refresh token específico (ej. para Logout)."""
+    await TokenUsuario.filter(token=token, tipo="REFRESH_TOKEN").delete()

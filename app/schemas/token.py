@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 # Lo que la API devuelve cuando el login es exitoso
 class Token(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
 
 
@@ -29,3 +30,6 @@ class TwoFactorSetupRequest(BaseModel):
 class TwoFactorVerifyRequest(BaseModel):
     user_id: UUID
     code: str = Field(..., min_length=6, max_length=6)
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
