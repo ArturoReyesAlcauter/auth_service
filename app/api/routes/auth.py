@@ -52,6 +52,7 @@ async def generar_payload_usuario(user: User) -> dict:
         "instancia_id": user.instancia_id,
         "entidad_federativa_id": user.entidad_federativa_id,
         "acciones": lista_acciones,
+        "token_version": user.token_version
     }
 
 

@@ -4,6 +4,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+# Expresión regular para contraseñas fuertes
+PASSWORD_REGEX = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&._-])[A-Za-z\d@$!%*?&._-]{8,}$"
+PASSWORD_ERROR_MSG = "La contraseña debe tener mínimo 8 caracteres, una mayúscula, una minúscula, un número y un carácter especial."
 
 # ==========================================
 # CATÁLOGOS
@@ -45,7 +48,12 @@ class UserCreate(BaseModel):
     )
     
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
-    password: str = Field(..., min_length=8)
+    password: str = Field(
+        ..., 
+        min_length=8, 
+        pattern=PASSWORD_REGEX,
+        description=PASSWORD_ERROR_MSG
+    )
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None
@@ -65,7 +73,12 @@ class UserUpdate(BaseModel):
     )
 
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
-    password: Optional[str] = Field(default=None, min_length=8)
+    password: Optional[str] = Field(
+        default=None, 
+        min_length=8, 
+        pattern=PASSWORD_REGEX,
+        description=PASSWORD_ERROR_MSG
+    )
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None

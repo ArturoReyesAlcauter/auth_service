@@ -47,6 +47,9 @@ class User(Model):
 
     contrasena_hasheada = fields.CharField(max_length=200)
 
+    # Control de versiones de sesión / revocación
+    token_version = fields.IntField(default=1, description="Incrementa para invalidar todos los tokens activos de este usuario")
+
     is_2fa_enabled = fields.BooleanField(default=False)
     totp_secret = fields.CharField(max_length=100, null=True)
 
