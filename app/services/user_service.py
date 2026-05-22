@@ -6,17 +6,17 @@ from app.core.security import get_password_hash
 from app.models.user import (
     User,
     EstatusUsuario,
-    RegistroPrincipal,
+    Grupo,
     Modulo,
     Accion,
-    UsuarioRegistro,
+    UsuarioGrupo,
     UsuarioModulo,
     UsuarioAccion,
 )
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
-    UsuarioRegistroCreate,
+    UsuarioGrupoCreate,
     UsuarioModuloCreate,
     UsuarioAccionCreate,
     UsuarioPermisosMasivosCreate,
@@ -149,16 +149,16 @@ async def get_user_by_id(user_id: UUID) -> User:
     return user
 
 
-async def assign_user_registro(
+async def assign_user_grupo(
     user_id: UUID,
-    data: UsuarioRegistroCreate,
-) -> UsuarioRegistro:
+    data: UsuarioGrupoCreate,
+) -> UsuarioGrupo:
     """
     Asigna un grupo a un usuario.
 
     Internamente:
-    grupo = RegistroPrincipal
-    usuario_grupo = UsuarioRegistro
+    grupo = Grupo
+    usuario_grupo = UsuarioGrupo
     """
 
     user = await User.get_or_none(id=user_id)
@@ -169,7 +169,7 @@ async def assign_user_registro(
             detail="Usuario no encontrado.",
         )
 
-    grupo = await RegistroPrincipal.get_or_none(id=data.registro_id)
+    grupo = await Grupo.get_or_none(id=data.grupo_id)
 
     if not grupo:
         raise HTTPException(
@@ -178,14 +178,14 @@ async def assign_user_registro(
         )
 
     try:
-        asignacion = await UsuarioRegistro.create(
+        asignacion = await UsuarioGrupo.create(
             usuario_id=user_id,
-            registro_id=data.registro_id,
+            grupo_id=data.grupo_id,
         )
 
         await resetear_ultima_sesion(user)
 
-        await asignacion.fetch_related("registro")
+        await asignacion.fetch_related("grupo")
         return asignacion
 
     except IntegrityError:
@@ -271,12 +271,12 @@ async def assign_user_accion(
 
 async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
     """
-    Quita a un usuario el acceso a un grupo/registro.
+    Quita a un usuario el acceso a un grupo.
 
     Cascada lógica:
     - elimina acciones asignadas que pertenezcan a módulos de ese grupo
     - elimina módulos asignados que pertenezcan a ese grupo
-    - elimina la relación usuario-registro
+    - elimina la relación usuario-grupo
     - INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS
 
     No elimina catálogos.
@@ -291,7 +291,7 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
             detail="Usuario no encontrado.",
         )
 
-    grupo = await RegistroPrincipal.get_or_none(id=grupo_id)
+    grupo = await Grupo.get_or_none(id=grupo_id)
 
     if not grupo:
         raise HTTPException(
@@ -299,9 +299,9 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
             detail="Grupo no encontrado.",
         )
 
-    asignacion = await UsuarioRegistro.get_or_none(
+    asignacion = await UsuarioGrupo.get_or_none(
         usuario_id=user_id,
-        registro_id=grupo_id,
+        grupo_id=grupo_id,
     )
 
     if not asignacion:
@@ -312,7 +312,7 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
 
     # 1. Obtener IDs de módulos que pertenecen al grupo
     modulo_ids = await Modulo.filter(
-        registro_principal_id=grupo_id,
+        grupo_id=grupo_id,
     ).values_list("id", flat=True)
 
     # 2. Obtener IDs de acciones que pertenecen a esos módulos
@@ -336,7 +336,7 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
             modulo_id__in=modulo_ids,
         ).delete()
 
-    # 5. Eliminar el registro/grupo asignado al usuario
+    # 5. Eliminar el grupo asignado al usuario
     await asignacion.delete()
 
     # 6. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
@@ -360,7 +360,7 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
     - elimina la relación usuario-módulo
     - INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS
 
-    No elimina el registro/grupo padre.
+    No elimina el grupo padre.
     No elimina catálogos.
     No elimina el usuario.
     """
@@ -417,7 +417,7 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
         "modulo_id": str(modulo_id),
         "acciones_eliminadas": acciones_eliminadas,
         "modulo_eliminado": True,
-        "registro_padre_eliminado": False,
+        "grupo_padre_eliminado": False,
     }
 
 async def remove_user_accion(user_id: UUID, accion_id: UUID):
@@ -475,20 +475,20 @@ async def usuario_tiene_accion(user_id: UUID, accion_nombre: str) -> bool:
     ).exists()
 
 async def obtener_permisos_usuario(user_id: UUID) -> dict:
-    registros_asignados = await UsuarioRegistro.filter(
+    grupos_asignados = await UsuarioGrupo.filter(
         usuario_id=user_id,
-    ).prefetch_related("registro")
+    ).prefetch_related("grupo")
 
     modulos_asignados = await UsuarioModulo.filter(
         usuario_id=user_id,
-    ).prefetch_related("modulo", "modulo__registro_principal")
+    ).prefetch_related("modulo", "modulo__grupo")
 
     acciones_asignadas = await UsuarioAccion.filter(
         usuario_id=user_id,
     ).prefetch_related("accion", "accion__modulo")
 
     return {
-        "registros": [item.registro for item in registros_asignados],
+        "grupos": [item.grupo for item in grupos_asignados],
         "modulos": [item.modulo for item in modulos_asignados],
         "acciones": [item.accion for item in acciones_asignadas],
     }
@@ -503,8 +503,8 @@ async def get_catalogo_permisos():
     Devuelve todo el catálogo de permisos del sistema.
 
     Estructura que devuelve:
-    - registros/grupos principales
-        - módulos de cada registro
+    - /grupos 
+        - módulos de cada grupo
             - acciones de cada módulo
 
     Esto sirve principalmente para el frontend, para que pueda mostrar
@@ -512,38 +512,38 @@ async def get_catalogo_permisos():
     qué permisos asignar sin buscar IDs manualmente en la base de datos.
     """
 
-    registros = await RegistroPrincipal.all().prefetch_related(
-        # Carga los módulos relacionados con cada registro.
+    grupos = await Grupo.all().prefetch_related(
+        # Carga los módulos relacionados con cada grupo.
         "modulos",
 
         # Carga las acciones relacionadas con cada módulo.
         "modulos__acciones",
     )
 
-    return registros
+    return grupos
 
 
 
 
-async def get_catalogo_permisos_por_registro(registro_id: UUID):
+async def get_catalogo_permisos_por_grupo(grupo_id: UUID):
     """
-    Devuelve módulos y acciones de un registro/grupo específico.
+    Devuelve módulos y acciones de un grupo específico.
     """
 
-    registro = await RegistroPrincipal.get_or_none(
-        id=registro_id
+    grupo = await Grupo.get_or_none(
+        id=grupo_id
     ).prefetch_related(
         "modulos",
         "modulos__acciones",
     )
 
-    if not registro:
+    if not grupo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Registro o grupo no encontrado.",
+            detail="Grupo no encontrado.",
         )
 
-    return registro
+    return grupo
 
 
 
@@ -559,18 +559,18 @@ async def assign_user_permisos_masivos(
     Asigna permisos a un usuario de forma masiva.
 
     Puede asignar:
-    - un registro/grupo completo
+    - un grupo completo
     - uno o varios módulos
     - una o varias acciones
 
     Reglas importantes:
     1. Si se asigna un módulo, también se asigna automáticamente
-       su registro/grupo padre.
+       su grupo padre.
     2. Si se asigna una acción, también se asigna automáticamente
-       su módulo padre y su registro/grupo padre.
+       su módulo padre y su grupo padre.
     3. Si algo ya estaba asignado, no marca error; simplemente lo ignora.
-    4. Si se manda registro_id, se valida que los módulos y acciones
-       realmente pertenezcan a ese registro.
+    4. Si se manda grupo_id, se valida que los módulos y acciones
+       realmente pertenezcan a ese grupo.
 
     Esto evita que el frontend tenga que hacer muchas peticiones como:
     - asignar grupo
@@ -592,42 +592,42 @@ async def assign_user_permisos_masivos(
 
     # Contadores para informar cuántos permisos nuevos se asignaron.
     # Si el permiso ya existía, no se cuenta como nuevo.
-    registros_asignados = 0
+    grupos_asignados = 0
     modulos_asignados = 0
     acciones_asignadas = 0
 
     # ==========================================
-    # 1. ASIGNAR REGISTRO / GRUPO SI VIENE
+    # 1. ASIGNAR GRUPO SI VIENE
     # ==========================================
 
-    if data.registro_id:
-        # Validamos que el registro/grupo exista.
-        registro = await RegistroPrincipal.get_or_none(id=data.registro_id)
+    if data.grupo_id:
+        # Validamos que el grupo exista.
+        grupo = await Grupo.get_or_none(id=data.grupo_id)
 
-        if not registro:
+        if not grupo:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Registro o grupo no encontrado.",
+                detail="Grupo no encontrado.",
             )
 
         # get_or_create evita duplicados.
-        # Si ya existe la relación usuario-registro, no la vuelve a crear.
-        _, creado = await UsuarioRegistro.get_or_create(
+        # Si ya existe la relación usuario-grupo, no la vuelve a crear.
+        _, creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
-            registro_id=data.registro_id,
+            grupo_id=data.grupo_id,
         )
 
         if creado:
-            registros_asignados += 1
+            grupos_asignados += 1
 
     # ==========================================
     # 2. ASIGNAR MÓDULOS
     # ==========================================
 
     for modulo_id in data.modulo_ids:
-        # Buscamos el módulo y cargamos su registro padre.
+        # Buscamos el módulo y cargamos su grupo padre.
         modulo = await Modulo.get_or_none(id=modulo_id).prefetch_related(
-            "registro_principal"
+            "grupo"
         )
 
         if not modulo:
@@ -636,24 +636,24 @@ async def assign_user_permisos_masivos(
                 detail=f"Módulo no encontrado: {modulo_id}",
             )
 
-        # Si el request mandó un registro_id, validamos que este módulo
-        # realmente pertenezca a ese registro.
+        # Si el request mandó un grupo_id, validamos que este módulo
+        # realmente pertenezca a ese grupo.
         # Esto evita asignar por error módulos de otro sistema.
-        if data.registro_id and modulo.registro_principal_id != data.registro_id:
+        if data.grupo_id and modulo.grupo_id != data.grupo_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"El módulo {modulo.nombre} no pertenece al registro indicado.",
+                detail=f"El módulo {modulo.nombre} no pertenece al grupo indicado.",
             )
 
         # Al asignar un módulo, también aseguramos que el usuario tenga
-        # asignado el registro/grupo padre del módulo.
-        _, registro_creado = await UsuarioRegistro.get_or_create(
+        # asignado el grupo padre del módulo.
+        _, grupo_creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
-            registro_id=modulo.registro_principal_id,
+            grupo_id=modulo.grupo_id,
         )
 
-        if registro_creado:
-            registros_asignados += 1
+        if grupo_creado:
+            grupos_asignados += 1
 
         # Ahora sí asignamos el módulo al usuario.
         _, modulo_creado = await UsuarioModulo.get_or_create(
@@ -671,10 +671,10 @@ async def assign_user_permisos_masivos(
     for accion_id in data.accion_ids:
         # Buscamos la acción y cargamos:
         # - su módulo padre
-        # - el registro padre de ese módulo
+        # - el grupo padre de ese módulo
         accion = await Accion.get_or_none(id=accion_id).prefetch_related(
             "modulo",
-            "modulo__registro_principal",
+            "modulo__grupo",
         )
 
         if not accion:
@@ -683,23 +683,23 @@ async def assign_user_permisos_masivos(
                 detail=f"Acción no encontrada: {accion_id}",
             )
 
-        # Si el request mandó un registro_id, validamos que esta acción
-        # realmente pertenezca a ese registro.
-        if data.registro_id and accion.modulo.registro_principal_id != data.registro_id:
+        # Si el request mandó un grupo_id, validamos que esta acción
+        # realmente pertenezca a ese grupo.
+        if data.grupo_id and accion.modulo.grupo_id != data.grupo_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"La acción {accion.nombre} no pertenece al registro indicado.",
+                detail=f"La acción {accion.nombre} no pertenece al grupo indicado.",
             )
 
         # Al asignar una acción, también aseguramos que el usuario tenga
-        # asignado el registro/grupo padre.
-        _, registro_creado = await UsuarioRegistro.get_or_create(
+        # asignado el grupo padre.
+        _, grupo_creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
-            registro_id=accion.modulo.registro_principal_id,
+            grupo_id=accion.modulo.grupo_id,
         )
 
-        if registro_creado:
-            registros_asignados += 1
+        if grupo_creado:
+            grupos_asignados += 1
 
         # También aseguramos que tenga asignado el módulo padre.
         _, modulo_creado = await UsuarioModulo.get_or_create(
@@ -720,7 +720,7 @@ async def assign_user_permisos_masivos(
             acciones_asignadas += 1
 
     # Si se asignó al menos un permiso nuevo, actualizamos la última sesión.
-    if registros_asignados > 0 or modulos_asignados > 0 or acciones_asignadas > 0:
+    if grupos_asignados > 0 or modulos_asignados > 0 or acciones_asignadas > 0:
         await resetear_ultima_sesion(user)
 
     # Consultamos los permisos finales del usuario para devolverlos
@@ -730,7 +730,7 @@ async def assign_user_permisos_masivos(
     return {
     "message": "Permisos asignados correctamente.",
     "user_id": str(user_id),
-    "registros_asignados": registros_asignados,
+    "grupos_asignados": grupos_asignados,
     "modulos_asignados": modulos_asignados,
     "acciones_asignadas": acciones_asignadas,
     "permisos": permisos,

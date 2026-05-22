@@ -124,7 +124,7 @@ class TokenUsuario(Model):
 # 2. JERARQUÍA DEL SISTEMA
 # ==========================================
 
-class RegistroPrincipal(Model):
+class Grupo(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
 
     nombre = fields.CharField(
@@ -135,14 +135,14 @@ class RegistroPrincipal(Model):
     descripcion = fields.CharField(max_length=200, null=True)
 
     class Meta:
-        table = "registros_principales"
+        table = "grupos"
 
 
 class Modulo(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
 
-    registro_principal = fields.ForeignKeyField(
-        "models.RegistroPrincipal",
+    grupo = fields.ForeignKeyField(
+        "models.Grupo",
         related_name="modulos",
         on_delete=fields.CASCADE
     )
@@ -182,17 +182,17 @@ class Accion(Model):
 # 3. ASIGNACIONES DESCENTRALIZADAS
 # ==========================================
 
-class UsuarioRegistro(Model):
+class UsuarioGrupo(Model):
     id = fields.UUIDField(pk=True, default=uuid.uuid4)
 
     usuario = fields.ForeignKeyField(
         "models.User",
-        related_name="registros_asignados",
+        related_name="grupos_asignados",
         on_delete=fields.CASCADE
     )
 
-    registro = fields.ForeignKeyField(
-        "models.RegistroPrincipal",
+    grupo = fields.ForeignKeyField(
+        "models.Grupo",
         related_name="usuarios_asignados",
         on_delete=fields.CASCADE
     )
@@ -200,8 +200,8 @@ class UsuarioRegistro(Model):
     fecha_asignacion = fields.DatetimeField(auto_now_add=True)
 
     class Meta:
-        table = "usuario_registros"
-        unique_together = (("usuario", "registro"),)
+        table = "usuario_grupos"
+        unique_together = (("usuario", "grupo"),)
 
 
 class UsuarioModulo(Model):

@@ -138,7 +138,7 @@ class UserListPublic(BaseModel):
 # RECURSOS DEL SISTEMA
 # ==========================================
 
-class RegistroPrincipalRead(BaseModel):
+class GrupoRead(BaseModel):
     id: UUID
     nombre: str
     descripcion: Optional[str] = None
@@ -151,7 +151,7 @@ class ModuloRead(BaseModel):
     id: UUID
     nombre: str
     descripcion: Optional[str] = None
-    registro_principal_id: UUID
+    grupo_id: UUID
 
     class Config:
         from_attributes = True
@@ -171,8 +171,8 @@ class AccionRead(BaseModel):
 # ASIGNACIONES
 # ==========================================
 
-class UsuarioRegistroCreate(BaseModel):
-    registro_id: UUID
+class UsuarioGrupoCreate(BaseModel):
+    grupo_id: UUID
 
 
 class UsuarioModuloCreate(BaseModel):
@@ -183,10 +183,10 @@ class UsuarioAccionCreate(BaseModel):
     accion_id: UUID
 
 
-class UsuarioRegistroRead(BaseModel):
+class UsuarioGrupoRead(BaseModel):
     id: UUID
     fecha_asignacion: datetime
-    registro: RegistroPrincipalRead
+    grupo: GrupoRead
 
     class Config:
         from_attributes = True
@@ -211,7 +211,7 @@ class UsuarioAccionRead(BaseModel):
 
 
 class PermisosUsuarioRead(BaseModel):
-    registros: List[RegistroPrincipalRead] = []
+    grupos: List[GrupoRead] = []
     modulos: List[ModuloRead] = []
     acciones: List[AccionRead] = []
 
@@ -224,7 +224,7 @@ class UserWithPermissionsRead(UserRead):
 # ==========================================
 # Estos schemas sirven para devolver el árbol completo:
 #
-# Registro / Grupo
+# Grupo
 #   -> Módulos
 #       -> Acciones
 #
@@ -266,18 +266,18 @@ class ModuloCatalogoRead(BaseModel):
         from_attributes = True
 
 
-class RegistroCatalogoRead(BaseModel):
-    # ID del registro o grupo principal.
+class GrupoCatalogoRead(BaseModel):
+    # ID del grupo.
     # Ejemplo: MP, MH, VF, RNCAS
     id: UUID
 
-    # Nombre corto del registro/grupo.
+    # Nombre corto del grupo.
     nombre: str
 
-    # Descripción del registro/grupo.
+    # Descripción del grupo.
     descripcion: Optional[str] = None
 
-    # Lista de módulos que pertenecen a este registro/grupo.
+    # Lista de módulos que pertenecen a este grupo.
     modulos: List[ModuloCatalogoRead] = []
 
     class Config:
@@ -288,20 +288,20 @@ class RegistroCatalogoRead(BaseModel):
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ==========================================
 # Este schema permite asignar a un usuario:
-# - un registro/grupo
+# - un grupo
 # - varios módulos
 # - varias acciones
 #
 # Nota:
 # Si se mandan acciones, el service también asignará automáticamente
-# el módulo padre y el registro padre de esas acciones.
+# el módulo padre y el grupo padre de esas acciones.
 
 
 class UsuarioPermisosMasivosCreate(BaseModel):
-    # Registro/grupo principal que se quiere asignar.
+    # Grupo que se quiere asignar.
     # Es opcional porque podrías asignar solo módulos o acciones,
-    # y el backend detectará automáticamente su registro padre.
-    registro_id: Optional[UUID] = None
+    # y el backend detectará automáticamente su grupo padre.
+    grupo_id: Optional[UUID] = None
 
     # Lista de módulos que se quieren asignar al usuario.
     # Puede venir vacía.

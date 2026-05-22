@@ -9,14 +9,14 @@ from app.schemas.user import (
     UserRead,
     UserUpdate,
     UserListPublic,
-    UsuarioRegistroCreate,
-    UsuarioRegistroRead,
+    UsuarioGrupoCreate,
+    UsuarioGrupoRead,
     UsuarioModuloCreate,
     UsuarioModuloRead,
     UsuarioAccionCreate,
     UsuarioAccionRead,
     UserWithPermissionsRead,
-    RegistroCatalogoRead,
+    GrupoCatalogoRead,
     UsuarioPermisosMasivosCreate,
 )
 from app.services import user_service
@@ -140,7 +140,7 @@ async def obtener_mi_usuario(
 
 @router.get(
     "/catalogo-permisos",
-    response_model=list[RegistroCatalogoRead],
+    response_model=list[GrupoCatalogoRead],
     status_code=status.HTTP_200_OK,
 )
 async def listar_catalogo_permisos(
@@ -150,7 +150,7 @@ async def listar_catalogo_permisos(
     Devuelve todo el catálogo de permisos disponible.
 
     Respuesta:
-    - registros/grupos
+    - grupos
         - módulos
             - acciones
 
@@ -171,7 +171,7 @@ async def listar_catalogo_permisos(
 
 @router.get(
     "/catalogo-permisos",
-    response_model=list[RegistroCatalogoRead],
+    response_model=list[GrupoCatalogoRead],
     status_code=status.HTTP_200_OK,
 )
 async def listar_catalogo_permisos(
@@ -184,23 +184,23 @@ async def listar_catalogo_permisos(
 
 
 @router.get(
-    "/catalogo-permisos/{registro_id}",
-    response_model=RegistroCatalogoRead,
+    "/catalogo-permisos/{grupo_id}",
+    response_model=GrupoCatalogoRead,
     status_code=status.HTTP_200_OK,
 )
-async def obtener_catalogo_permisos_por_registro(
-    registro_id: UUID,
+async def obtener_catalogo_permisos_por_grupo(
+    grupo_id: UUID,
     current_user: User = Depends(requiere_accion("VER_USUARIOS")),
 ):
     """
-    Devuelve el catálogo de permisos de un registro/grupo específico.
+    Devuelve el catálogo de permisos de un grupo específico.
 
     Respuesta:
-    - registro/grupo
+    - grupo
         - módulos
             - acciones
     """
-    return await user_service.get_catalogo_permisos_por_registro(registro_id)
+    return await user_service.get_catalogo_permisos_por_grupo(grupo_id)
 
 
 
@@ -223,16 +223,16 @@ async def asignar_permisos_masivos_usuario(
 
     Body permitido:
     {
-      "registro_id": "uuid-opcional-del-registro",
+      "grupo_id": "uuid-opcional-del-grupo",
       "modulo_ids": ["uuid-modulo-1", "uuid-modulo-2"],
       "accion_ids": ["uuid-accion-1", "uuid-accion-2"]
     }
 
     Reglas:
-    - Si mandas solo registro_id, asigna el registro/grupo.
-    - Si mandas módulos, asigna esos módulos y su registro padre.
+    - Si mandas solo grupo_id, asigna el grupo.
+    - Si mandas módulos, asigna esos módulos y su grupo padre.
     - Si mandas acciones, asigna esas acciones, sus módulos padre
-      y sus registros padre.
+      y sus grupos padre.
     - Si algo ya estaba asignado, no duplica ni marca error.
     """
     return await user_service.assign_user_permisos_masivos(
@@ -254,7 +254,7 @@ async def obtener_usuario_por_id(
     current_user: User = Depends(requiere_accion("VER_USUARIO_DETALLE")),
 ):
     """
-    Consulta un usuario específico por su ID junto con sus registros,
+    Consulta un usuario específico por su ID junto con sus grupos,
     módulos y acciones asignadas.
     """
     user = await user_service.get_user_by_id(user_id)
@@ -286,22 +286,21 @@ async def obtener_usuario_por_id(
 
 @router.post(
     "/{user_id}/grupos",
-    response_model=UsuarioRegistroRead,
+    response_model=UsuarioGrupoRead,
     status_code=status.HTTP_201_CREATED,
 )
 async def asignar_grupo_usuario(
     user_id: UUID,
-    data: UsuarioRegistroCreate,
+    data: UsuarioGrupoCreate,
     current_user: User = Depends(requiere_accion("ASIGNAR_GRUPOS_USUARIO")),
 ):
     """
     Asigna un grupo a un usuario.
 
     Internamente:
-    grupo = RegistroPrincipal.
     No crea un grupo nuevo, solo crea la asignación usuario-grupo.
     """
-    return await user_service.assign_user_registro(user_id, data)
+    return await user_service.assign_user_grupo(user_id, data)
 
 
 
@@ -358,7 +357,7 @@ async def quitar_grupo_usuario(
     Quita a un usuario el acceso a un grupo.
 
     No elimina el grupo del catálogo.
-    Solo elimina la asignación en usuario_registros.
+    Solo elimina la asignación en usuario_grupos.
     """
     return await user_service.remove_user_grupo(user_id, grupo_id)
 
