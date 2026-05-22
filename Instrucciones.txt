@@ -83,3 +83,9 @@ O también:
 uvicorn app.main:app --reload --port 8001
 12. Abrir documentación
 http://127.0.0.1:8001/docs
+
+
+Reiniciar la base de datos
+uv run python reset_db.py
+uv run aerich upgrade
+uv run python seed.py
