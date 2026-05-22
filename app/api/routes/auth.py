@@ -158,8 +158,20 @@ async def login_verify_2fa(
     payload = await generar_payload_usuario(user)
     access_token = create_access_token(data=payload)
 
+    refresh_token_str, expire_dt = create_refresh_token(
+        {"sub": str(user.id)},
+        expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
+    )
+
+    await auth_service.store_refresh_token(
+        user.id,
+        refresh_token_str,
+        expire_dt,
+    )
+
     return Token(
         access_token=access_token,
+        refresh_token=refresh_token_str,
         token_type="bearer",
     )
 
@@ -239,6 +251,49 @@ async def enable_2fa(
     user = await User.get_or_none(id=data.user_id).prefetch_related(
         "estatus",
         "instancia",
+    )
+
+    if not user or not usuario_esta_activo(user):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Usuario inválido.",
+        )
+
+    if not user.totp_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Primero debes generar el QR (setup).",
+        )
+
+    is_valid = auth_service.verify_totp_code(user.totp_secret, data.code)
+
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Código inválido. Intenta de nuevo.",
+        )
+
+    user.is_2fa_enabled = True
+    await user.save()
+
+    payload = await generar_payload_usuario(user)
+    access_token = create_access_token(data=payload)
+
+    refresh_token_str, expire_dt = create_refresh_token(
+        {"sub": str(user.id)},
+        expire_days=settings.REFRESH_TOKEN_EXPIRE_DAYS,
+    )
+
+    await auth_service.store_refresh_token(
+        user.id,
+        refresh_token_str,
+        expire_dt,
+    )
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token_str,
+        token_type="bearer",
     )
 
 # --- ROTACIÓN DE REFRESH TOKEN ---

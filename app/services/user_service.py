@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
+from tortoise.expressions import F
 from app.core.security import get_password_hash
 from app.models.user import (
     User,
