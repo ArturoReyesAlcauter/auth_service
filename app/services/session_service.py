@@ -7,7 +7,7 @@ from app.models.user import (
     User,
     UsuarioAccion,
     UsuarioModulo,
-    UsuarioRegistro,
+    UsuarioGrupo,
 )
 
 
@@ -45,7 +45,7 @@ async def revocar_accesos_usuario(usuario: User):
 
     await UsuarioAccion.filter(usuario_id=usuario.id).delete()
     await UsuarioModulo.filter(usuario_id=usuario.id).delete()
-    await UsuarioRegistro.filter(usuario_id=usuario.id).delete()
+    await UsuarioGrupo.filter(usuario_id=usuario.id).delete()
 
 
 async def validar_ultima_sesion_o_revocar(usuario: User):

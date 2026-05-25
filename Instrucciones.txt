@@ -89,3 +89,7 @@ Reiniciar la base de datos
 uv run python reset_db.py
 uv run aerich upgrade
 uv run python seed.py
+
+
+uv run aerich migrate --name cambio_grupos
+uv run aerich upgrade 

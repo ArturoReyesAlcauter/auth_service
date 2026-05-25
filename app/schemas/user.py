@@ -210,10 +210,37 @@ class UsuarioAccionRead(BaseModel):
         from_attributes = True
 
 
+class AccionPermisoRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModuloPermisoRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+    acciones: List[AccionPermisoRead] = []
+
+    class Config:
+        from_attributes = True
+
+
+class GrupoPermisoRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+    modulos: List[ModuloPermisoRead] = []
+
+    class Config:
+        from_attributes = True
+
+
 class PermisosUsuarioRead(BaseModel):
-    grupos: List[GrupoRead] = []
-    modulos: List[ModuloRead] = []
-    acciones: List[AccionRead] = []
+    grupos: List[GrupoPermisoRead] = []
 
 
 class UserWithPermissionsRead(UserRead):

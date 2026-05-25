@@ -8,10 +8,10 @@ from app.models.user import (
     EstatusUsuario,
     Instancia,
     User,
-    RegistroPrincipal,
+    Grupo,
     Modulo,
     Accion,
-    UsuarioRegistro,
+    UsuarioGrupo,
     UsuarioModulo,
     UsuarioAccion,
 )
@@ -30,6 +30,7 @@ ADMIN_ENTIDAD_FEDERATIVA_ID = 9
 async def asegurar_estatus_usuario(id_estatus: int, nombre: str) -> EstatusUsuario:
     """
     Crea o actualiza un estatus de usuario con ID fijo.
+
     Esto asegura que el catálogo siempre tenga los IDs esperados:
     1 = Activo
     2 = En Proceso
@@ -114,31 +115,30 @@ async def main():
 
     # ==========================================
     # 3. GRUPOS PRINCIPALES
-    # Internamente todavía usan el modelo RegistroPrincipal.
     # ==========================================
 
-    grupo_mp, _ = await RegistroPrincipal.get_or_create(
+    grupo_mp, _ = await Grupo.get_or_create(
         nombre="MP",
         defaults={
             "descripcion": "Registro de Medidas de Protección",
         },
     )
 
-    grupo_mh, _ = await RegistroPrincipal.get_or_create(
+    grupo_mh, _ = await Grupo.get_or_create(
         nombre="MH",
         defaults={
             "descripcion": "Registro de Movilidad Humana",
         },
     )
 
-    grupo_vf, _ = await RegistroPrincipal.get_or_create(
+    grupo_vf, _ = await Grupo.get_or_create(
         nombre="VF",
         defaults={
             "descripcion": "Registro de Derecho a Vivir en Familia",
         },
     )
 
-    grupo_rncas, _ = await RegistroPrincipal.get_or_create(
+    grupo_rncas, _ = await Grupo.get_or_create(
         nombre="RNCAS",
         defaults={
             "descripcion": "Registro Nacional de Centros de Asistencia Social",
@@ -164,7 +164,7 @@ async def main():
     # =====================================================
 
     modulo_mp_expedientes, _ = await Modulo.get_or_create(
-        registro_principal=grupo_mp,
+        grupo=grupo_mp,
         nombre="EXPEDIENTES",
         defaults={
             "descripcion": "Módulo core de expedientes del Registro de Medidas de Protección",
@@ -216,7 +216,7 @@ async def main():
     # =====================================================
 
     modulo_mp_secciones, _ = await Modulo.get_or_create(
-        registro_principal=grupo_mp,
+        grupo=grupo_mp,
         nombre="SECCIONES",
         defaults={
             "descripcion": "Módulo de secciones editables del Registro de Medidas de Protección",
@@ -287,7 +287,7 @@ async def main():
 
     for grupo in grupos:
         modulo_usuarios, _ = await Modulo.get_or_create(
-            registro_principal=grupo,
+            grupo=grupo,
             nombre="ADMINISTRACION_USUARIOS",
             defaults={
                 "descripcion": f"Módulo de administración de usuarios para {grupo.nombre}",
@@ -310,8 +310,6 @@ async def main():
     # ==========================================
     # 5. USUARIO ADMIN PREDETERMINADO
     # ==========================================
-    # Buscamos por correo para evitar error de correo duplicado
-    # si cambias el CURP del admin.
 
     admin = await User.get_or_none(correo_electronico=ADMIN_EMAIL)
 
@@ -364,9 +362,9 @@ async def main():
     # ==========================================
 
     for grupo in grupos:
-        await UsuarioRegistro.get_or_create(
+        await UsuarioGrupo.get_or_create(
             usuario=admin,
-            registro=grupo,
+            grupo=grupo,
         )
 
     for modulo in modulos_creados:
@@ -407,9 +405,9 @@ async def main():
     print(f"Password: {ADMIN_PASSWORD}")
     print("")
     print("Grupos creados/asignados:")
-    print("- MP  : Registro de Medidas de Protección")
-    print("- MH  : Registro de Movilidad Humana")
-    print("- VF  : Registro de Derecho a Vivir en Familia")
+    print("- MP   : Registro de Medidas de Protección")
+    print("- MH   : Registro de Movilidad Humana")
+    print("- VF   : Registro de Derecho a Vivir en Familia")
     print("- RNCAS: Registro Nacional de Centros de Asistencia Social")
     print("")
     print("Módulos MP creados:")
