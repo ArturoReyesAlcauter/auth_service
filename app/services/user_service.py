@@ -476,25 +476,146 @@ async def usuario_tiene_accion(user_id: UUID, accion_nombre: str) -> bool:
     ).exists()
 
 async def obtener_permisos_usuario(user_id: UUID) -> dict:
+    """
+    Devuelve los permisos del usuario organizados de forma jerárquica:
+
+    Grupo
+      -> Módulos
+          -> Acciones
+
+    Esto evita regresar tres listas separadas y facilita que el frontend
+    pinte los permisos agrupados correctamente.
+    """
+
     grupos_asignados = await UsuarioGrupo.filter(
         usuario_id=user_id,
     ).prefetch_related("grupo")
 
     modulos_asignados = await UsuarioModulo.filter(
         usuario_id=user_id,
-    ).prefetch_related("modulo", "modulo__grupo")
+    ).prefetch_related(
+        "modulo",
+        "modulo__grupo",
+    )
 
     acciones_asignadas = await UsuarioAccion.filter(
         usuario_id=user_id,
-    ).prefetch_related("accion", "accion__modulo")
+    ).prefetch_related(
+        "accion",
+        "accion__modulo",
+        "accion__modulo__grupo",
+    )
+
+    grupos_dict = {}
+
+    # ==========================================
+    # 1. AGREGAR GRUPOS
+    # ==========================================
+
+    for item in grupos_asignados:
+        grupo = item.grupo
+        grupo_id = str(grupo.id)
+
+        if grupo_id not in grupos_dict:
+            grupos_dict[grupo_id] = {
+                "id": grupo.id,
+                "nombre": grupo.nombre,
+                "descripcion": grupo.descripcion,
+                "modulos": {},
+            }
+
+    # ==========================================
+    # 2. AGREGAR MÓDULOS DENTRO DE SU GRUPO
+    # ==========================================
+
+    for item in modulos_asignados:
+        modulo = item.modulo
+        grupo = modulo.grupo
+
+        grupo_id = str(grupo.id)
+        modulo_id = str(modulo.id)
+
+        if grupo_id not in grupos_dict:
+            grupos_dict[grupo_id] = {
+                "id": grupo.id,
+                "nombre": grupo.nombre,
+                "descripcion": grupo.descripcion,
+                "modulos": {},
+            }
+
+        if modulo_id not in grupos_dict[grupo_id]["modulos"]:
+            grupos_dict[grupo_id]["modulos"][modulo_id] = {
+                "id": modulo.id,
+                "nombre": modulo.nombre,
+                "descripcion": modulo.descripcion,
+                "acciones": {},
+            }
+
+    # ==========================================
+    # 3. AGREGAR ACCIONES DENTRO DE SU MÓDULO
+    # ==========================================
+
+    for item in acciones_asignadas:
+        accion = item.accion
+        modulo = accion.modulo
+        grupo = modulo.grupo
+
+        grupo_id = str(grupo.id)
+        modulo_id = str(modulo.id)
+        accion_id = str(accion.id)
+
+        if grupo_id not in grupos_dict:
+            grupos_dict[grupo_id] = {
+                "id": grupo.id,
+                "nombre": grupo.nombre,
+                "descripcion": grupo.descripcion,
+                "modulos": {},
+            }
+
+        if modulo_id not in grupos_dict[grupo_id]["modulos"]:
+            grupos_dict[grupo_id]["modulos"][modulo_id] = {
+                "id": modulo.id,
+                "nombre": modulo.nombre,
+                "descripcion": modulo.descripcion,
+                "acciones": {},
+            }
+
+        grupos_dict[grupo_id]["modulos"][modulo_id]["acciones"][accion_id] = {
+            "id": accion.id,
+            "nombre": accion.nombre,
+            "descripcion": accion.descripcion,
+        }
+
+    # ==========================================
+    # 4. CONVERTIR DICCIONARIOS A LISTAS
+    # ==========================================
+
+    grupos = []
+
+    for grupo_data in grupos_dict.values():
+        modulos = []
+
+        for modulo_data in grupo_data["modulos"].values():
+            acciones = list(modulo_data["acciones"].values())
+
+            # Ordenamos acciones alfabéticamente
+            acciones.sort(key=lambda accion: accion["nombre"])
+
+            modulo_data["acciones"] = acciones
+            modulos.append(modulo_data)
+
+        # Ordenamos módulos alfabéticamente
+        modulos.sort(key=lambda modulo: modulo["nombre"])
+
+        grupo_data["modulos"] = modulos
+        grupos.append(grupo_data)
+
+    # Ordenamos grupos alfabéticamente
+    grupos.sort(key=lambda grupo: grupo["nombre"])
 
     return {
-        "grupos": [item.grupo for item in grupos_asignados],
-        "modulos": [item.modulo for item in modulos_asignados],
-        "acciones": [item.accion for item in acciones_asignadas],
+        "grupos": grupos,
     }
-
-
 # ==========================================
 # CATÁLOGO COMPLETO DE PERMISOS
 # ==========================================
