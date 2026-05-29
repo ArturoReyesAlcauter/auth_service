@@ -5,10 +5,23 @@ from tortoise.contrib.fastapi import register_tortoise
 from app.core.config import settings, TORTOISE_ORM
 from app.api.routes import auth, users
 
-ORIGINES_PERMITIDOS = [
-    "http://localhost:3000",      # Frontend (React/Vue/Angular - puerto típico)
-    "http://127.0.0.1:3000",      # Variante de localhost
-    "http://localhost:8000",      # El mismo Swagger
+ORIGENES_PERMITIDOS = [
+    # Frontend Vite local
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+
+    # Puertos alternos de Vite si cambia automáticamente
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+    "http://localhost:5175",
+    "http://127.0.0.1:5175",
+
+    # Puertos comunes de frontend
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+
+    # Backend / Swagger local
+    "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8001",
 ]
@@ -21,7 +34,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ORIGINES_PERMITIDOS,
+    allow_origins=ORIGENES_PERMITIDOS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
