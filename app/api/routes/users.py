@@ -8,6 +8,7 @@ from app.schemas.user import (
     UserCreate,
     UserRead,
     UserUpdate,
+    UserMeUpdate,
     UserListPublic,
     UsuarioGrupoCreate,
     UsuarioGrupoRead,
@@ -18,12 +19,17 @@ from app.schemas.user import (
     UserWithPermissionsRead,
     GrupoCatalogoRead,
     UsuarioPermisosMasivosCreate,
+    CrearPasswordPrimeraVez,
 )
 from app.services import user_service
 
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
 
+
+# ==========================================
+# CREAR USUARIO
+# ==========================================
 
 @router.post(
     "",
@@ -36,6 +42,10 @@ async def crear_usuario(
 ):
     """
     Crea un usuario en el servicio de autenticación.
+
+    El usuario se crea sin contraseña.
+    La contraseña se generará posteriormente mediante el enlace enviado por correo.
+
     Solo usuarios con permiso CREAR_USUARIO pueden ejecutar esta acción.
     """
     user = await user_service.create_user(user_in)
@@ -43,60 +53,113 @@ async def crear_usuario(
     return user
 
 
+# ==========================================
+# USUARIO AUTENTICADO / MI CUENTA
+# ==========================================
+
+@router.get(
+    "/me",
+    response_model=UserWithPermissionsRead,
+    status_code=status.HTTP_200_OK,
+)
+async def obtener_mi_usuario(
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Consulta la información del usuario autenticado junto con sus permisos.
+
+    Devuelve:
+    - datos generales del usuario
+    - estatus
+    - instancia
+    - permisos organizados por grupo, módulo y acción
+    """
+    await current_user.fetch_related("estatus", "instancia")
+
+    permisos = await user_service.obtener_permisos_usuario(current_user.id)
+
+    return {
+        "id": current_user.id,
+        "nombre": current_user.nombre,
+        "primer_apellido": current_user.primer_apellido,
+        "segundo_apellido": current_user.segundo_apellido,
+        "correo_electronico": current_user.correo_electronico,
+        "curp": current_user.curp,
+        "entidad_federativa_id": current_user.entidad_federativa_id,
+        "numero_telefono": current_user.numero_telefono,
+        "is_2fa_enabled": current_user.is_2fa_enabled,
+        "estatus": current_user.estatus,
+        "instancia": current_user.instancia,
+        "intentos_login": current_user.intentos_login,
+        "fecha_correo_verificado": current_user.fecha_correo_verificado,
+        "fecha_creacion": current_user.fecha_creacion,
+        "fecha_actualizacion": current_user.fecha_actualizacion,
+        "permisos": permisos,
+    }
+
 
 @router.patch(
-    "/{user_id}/estatus/{estatus_id}",
+    "/me",
     response_model=UserRead,
     status_code=status.HTTP_200_OK,
 )
-async def cambiar_estatus_usuario(
-    user_id: UUID,
-    estatus_id: int,
-    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+async def modificar_mi_usuario(
+    user_in: UserMeUpdate,
+    current_user: User = Depends(get_current_active_user),
 ):
     """
-    Cambia el estatus de un usuario usando cat_estatus_usuarios.
+    Permite que el usuario autenticado actualice solo sus datos básicos.
 
-    Ejemplos:
-    - 1 = Activo
-    - 2 = En Proceso
-    - 3 = Inactivo
-    - 4 = Intentos en exceso sesión
+    Campos permitidos:
+    - nombre
+    - primer_apellido
+    - segundo_apellido
+    - correo_electronico
+    - numero_telefono
+    - password_actual
+    - password_nueva
+
+    No permite modificar:
+    - CURP
+    - estatus
+    - instancia
+    - permisos
+    - grupos
+    - módulos
+    - acciones
     """
-    return await user_service.cambiar_estatus_usuario(
-        user_id=user_id,
-        estatus_id=estatus_id,
+    return await user_service.update_me(
+        user_id=current_user.id,
+        user_in=user_in,
     )
 
 
+# ==========================================
+# CREAR CONTRASEÑA POR PRIMERA VEZ
+# ==========================================
 
-@router.patch(
-    "/{user_id}",
-    response_model=UserRead,
+@router.post(
+    "/crear-password",
     status_code=status.HTTP_200_OK,
 )
-async def modificar_usuario(
-    user_id: UUID,
-    user_in: UserUpdate,
-    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+async def crear_password_primera_vez(
+    data: CrearPasswordPrimeraVez,
 ):
     """
-    Modifica los datos generales de un usuario.
+    Permite crear la contraseña por primera vez usando el token enviado por correo.
 
-    Permite actualizar:
-    - nombre
-    - apellidos
-    - correo electrónico
-    - CURP
-    - entidad federativa
-    - teléfono
-    - contraseña
-    - estatus
-    - instancia
-
-    No modifica permisos, grupos, módulos ni acciones.
+    Este endpoint no requiere JWT porque el usuario todavía no tiene contraseña
+    ni ha iniciado sesión.
     """
-    return await user_service.update_user(user_id, user_in)
+    return await user_service.crear_password_primera_vez(
+        token=data.token,
+        password=data.password,
+    )
+
+
+# ==========================================
+# LISTAR USUARIOS
+# ==========================================
 
 @router.get(
     "",
@@ -108,30 +171,10 @@ async def listar_usuarios(
 ):
     """
     Lista usuarios registrados.
+
     Solo usuarios con permiso VER_USUARIOS pueden ejecutar esta acción.
     """
     return await user_service.get_users()
-
-
-@router.get(
-    "/me",
-    response_model=UserWithPermissionsRead,
-    status_code=status.HTTP_200_OK,
-)
-async def obtener_mi_usuario(
-    current_user: User = Depends(get_current_active_user),
-):
-    await current_user.fetch_related("estatus", "instancia")
-
-    permisos = await user_service.obtener_permisos_usuario(current_user.id)
-
-    return {
-        **current_user.__dict__,
-        "estatus": current_user.estatus,
-        "instancia": current_user.instancia,
-        "permisos": permisos,
-    }
-
 
 
 # ==========================================
@@ -162,27 +205,6 @@ async def listar_catalogo_permisos(
     return await user_service.get_catalogo_permisos()
 
 
-
-
-
-# ==========================================
-# CATÁLOGO DE PERMISOS
-# ==========================================
-
-@router.get(
-    "/catalogo-permisos",
-    response_model=list[GrupoCatalogoRead],
-    status_code=status.HTTP_200_OK,
-)
-async def listar_catalogo_permisos(
-    current_user: User = Depends(requiere_accion("VER_USUARIOS")),
-):
-    """
-    Devuelve todo el catálogo de permisos disponible.
-    """
-    return await user_service.get_catalogo_permisos()
-
-
 @router.get(
     "/catalogo-permisos/{grupo_id}",
     response_model=GrupoCatalogoRead,
@@ -203,6 +225,107 @@ async def obtener_catalogo_permisos_por_grupo(
     return await user_service.get_catalogo_permisos_por_grupo(grupo_id)
 
 
+# ==========================================
+# MODIFICACIÓN ADMINISTRATIVA DE USUARIOS
+# ==========================================
+
+@router.patch(
+    "/{user_id}/estatus/{estatus_id}",
+    response_model=UserRead,
+    status_code=status.HTTP_200_OK,
+)
+async def cambiar_estatus_usuario(
+    user_id: UUID,
+    estatus_id: int,
+    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+):
+    """
+    Cambia el estatus de un usuario usando cat_estatus_usuarios.
+
+    Ejemplos:
+    - 1 = Activo
+    - 2 = En Proceso
+    - 3 = Inactivo
+    - 4 = Intentos en exceso sesión
+    """
+    return await user_service.cambiar_estatus_usuario(
+        user_id=user_id,
+        estatus_id=estatus_id,
+    )
+
+
+@router.patch(
+    "/{user_id}",
+    response_model=UserRead,
+    status_code=status.HTTP_200_OK,
+)
+async def modificar_usuario(
+    user_id: UUID,
+    user_in: UserUpdate,
+    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+):
+    """
+    Modifica datos administrativos de un usuario.
+
+    Permite actualizar:
+    - nombre
+    - apellidos
+    - correo electrónico
+    - CURP
+    - entidad federativa
+    - teléfono
+    - estatus
+    - instancia
+
+    No modifica:
+    - contraseña
+    - permisos
+    - grupos
+    - módulos
+    - acciones
+    """
+    return await user_service.update_user(user_id, user_in)
+
+
+# ==========================================
+# CONSULTAR USUARIO POR ID
+# ==========================================
+
+@router.get(
+    "/{user_id}",
+    response_model=UserWithPermissionsRead,
+    status_code=status.HTTP_200_OK,
+)
+async def obtener_usuario_por_id(
+    user_id: UUID,
+    current_user: User = Depends(requiere_accion("VER_USUARIO_DETALLE")),
+):
+    """
+    Consulta un usuario específico por su ID junto con sus grupos,
+    módulos y acciones asignadas.
+    """
+    user = await user_service.get_user_by_id(user_id)
+
+    permisos = await user_service.obtener_permisos_usuario(user.id)
+
+    return {
+        "id": user.id,
+        "nombre": user.nombre,
+        "primer_apellido": user.primer_apellido,
+        "segundo_apellido": user.segundo_apellido,
+        "correo_electronico": user.correo_electronico,
+        "curp": user.curp,
+        "entidad_federativa_id": user.entidad_federativa_id,
+        "numero_telefono": user.numero_telefono,
+        "is_2fa_enabled": user.is_2fa_enabled,
+        "estatus": user.estatus,
+        "instancia": user.instancia,
+        "intentos_login": user.intentos_login,
+        "fecha_correo_verificado": user.fecha_correo_verificado,
+        "fecha_creacion": user.fecha_creacion,
+        "fecha_actualizacion": user.fecha_actualizacion,
+        "permisos": permisos,
+    }
 
 
 # ==========================================
@@ -241,47 +364,8 @@ async def asignar_permisos_masivos_usuario(
     )
 
 
-
-
-
-@router.get(
-    "/{user_id}",
-    response_model=UserWithPermissionsRead,
-    status_code=status.HTTP_200_OK,
-)
-async def obtener_usuario_por_id(
-    user_id: UUID,
-    current_user: User = Depends(requiere_accion("VER_USUARIO_DETALLE")),
-):
-    """
-    Consulta un usuario específico por su ID junto con sus grupos,
-    módulos y acciones asignadas.
-    """
-    user = await user_service.get_user_by_id(user_id)
-
-    permisos = await user_service.obtener_permisos_usuario(user.id)
-
-    return {
-        "id": user.id,
-        "nombre": user.nombre,
-        "primer_apellido": user.primer_apellido,
-        "segundo_apellido": user.segundo_apellido,
-        "correo_electronico": user.correo_electronico,
-        "curp": user.curp,
-        "entidad_federativa_id": user.entidad_federativa_id,
-        "numero_telefono": user.numero_telefono,
-        "is_2fa_enabled": user.is_2fa_enabled,
-        "estatus": user.estatus,
-        "instancia": user.instancia,
-        "intentos_login": user.intentos_login,
-        "fecha_correo_verificado": user.fecha_correo_verificado,
-        "fecha_creacion": user.fecha_creacion,
-        "fecha_actualizacion": user.fecha_actualizacion,
-        "permisos": permisos,
-    }
-
 # ==========================================
-# ASIGNAR ACCESOS
+# ASIGNAR ACCESOS INDIVIDUALES
 # ==========================================
 
 @router.post(
@@ -301,7 +385,6 @@ async def asignar_grupo_usuario(
     No crea un grupo nuevo, solo crea la asignación usuario-grupo.
     """
     return await user_service.assign_user_grupo(user_id, data)
-
 
 
 @router.post(
@@ -360,6 +443,7 @@ async def quitar_grupo_usuario(
     Solo elimina la asignación en usuario_grupos.
     """
     return await user_service.remove_user_grupo(user_id, grupo_id)
+
 
 @router.delete(
     "/{user_id}/modulos/{modulo_id}",

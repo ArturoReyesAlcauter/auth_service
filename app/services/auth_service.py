@@ -32,6 +32,15 @@ async def authenticate_user(curp: str, password: str):
         get_password_hash(password)
         return None
 
+    """Si el usuario existe pero no tiene contraseña hasheada, es porque aún no activó su cuenta."""
+    #esta, para evitar que alguien intente iniciar sesión antes de crear contraseña
+    if not user.contrasena_hasheada:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="La cuenta aún no tiene contraseña configurada. Revisa el correo de activación o solicita un nuevo enlace.",
+    )
+
+
     if user.intentos_login >= MAX_INTENTOS_LOGIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -45,7 +45,7 @@ class User(Model):
     entidad_federativa_id = fields.IntField(null=True, description="ID de la entidad federativa obtenido desde el catálogo externo")
     numero_telefono = fields.CharField(max_length=15, null=True)
 
-    contrasena_hasheada = fields.CharField(max_length=200)
+    contrasena_hasheada = fields.CharField(max_length=200, null=True)
 
     # Control de versiones de sesión / revocación
     token_version = fields.IntField(default=1, description="Incrementa para invalidar todos los tokens activos de este usuario")

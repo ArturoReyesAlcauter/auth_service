@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 # Expresión regular para contraseñas fuertes
 PASSWORD_REGEX = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&._-])[A-Za-z\d@$!%*?&._-]{8,}$"
@@ -48,18 +48,11 @@ class UserCreate(BaseModel):
     )
     
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
-    password: str = Field(..., min_length=8)
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None
 
-    # Agregamos el validador personalizado usando el motor 're' de Python
-    @field_validator("password")
-    @classmethod
-    def validar_password_fuerte(cls, v: str) -> str:
-        if not re.match(PASSWORD_REGEX, v):
-            raise ValueError(PASSWORD_ERROR_MSG)
-        return v
+
 
 class UserUpdate(BaseModel):
     nombre: Optional[str] = Field(default=None, max_length=100)
@@ -76,18 +69,57 @@ class UserUpdate(BaseModel):
     )
 
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
-    password: Optional[str] = Field(default=None, min_length=8)
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None
 
-    # Agregamos el validador, considerando que aquí la contraseña puede ser None
-    @field_validator("password")
+
+
+class UserMeUpdate(BaseModel):
+    nombre: Optional[str] = Field(default=None, max_length=100)
+    primer_apellido: Optional[str] = Field(default=None, max_length=100)
+    segundo_apellido: Optional[str] = Field(default=None, max_length=100)
+
+    correo_electronico: Optional[EmailStr] = Field(default=None, max_length=200)
+    numero_telefono: Optional[str] = Field(default=None, max_length=15)
+
+    password_actual: Optional[str] = None
+    password_nueva: Optional[str] = Field(default=None, min_length=8)
+
+    @field_validator("password_nueva")
     @classmethod
     def validar_password_fuerte(cls, v: Optional[str]) -> Optional[str]:
         if v is not None and not re.match(PASSWORD_REGEX, v):
             raise ValueError(PASSWORD_ERROR_MSG)
         return v
+
+    @model_validator(mode="after")
+    def validar_cambio_password(self):
+        if self.password_nueva and not self.password_actual:
+            raise ValueError("Para cambiar la contraseña debes enviar la contraseña actual.")
+
+        if self.password_actual and not self.password_nueva:
+            raise ValueError("Para cambiar la contraseña debes enviar la nueva contraseña.")
+
+        return self
+
+
+
+
+
+class CrearPasswordPrimeraVez(BaseModel):
+    token: str
+    password: str = Field(..., min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def validar_password_fuerte(cls, v: str) -> str:
+        if not re.match(PASSWORD_REGEX, v):
+            raise ValueError(PASSWORD_ERROR_MSG)
+        return v
+
+
+
 
 
 

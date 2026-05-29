@@ -4,11 +4,23 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Login PorTusDerechos"
     VERSION: str = "1.0.0"
+
     DATABASE_URL: str = "sqlite://database.db"
+
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # Configuración SMTP para envío de correos
+    SMTP_HOST: str = "sandbox.smtp.mailtrap.io"
+    SMTP_PORT: int = 2525
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "no-reply@portusderechos.gob.mx"
+
+    # URL del frontend para construir links de activación
+    FRONTEND_URL: str = "http://localhost:5173"
 
     class Config:
         env_file = ".env"

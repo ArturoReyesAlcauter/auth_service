@@ -1,9 +1,15 @@
 from uuid import UUID
+from pathlib import Path
+from secrets import token_urlsafe
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
 from tortoise.expressions import F
-from app.core.security import get_password_hash
+
+from app.core.security import get_password_hash, verify_password
+from app.core.config import settings
+
 from app.models.user import (
     User,
     EstatusUsuario,
@@ -13,16 +19,22 @@ from app.models.user import (
     UsuarioGrupo,
     UsuarioModulo,
     UsuarioAccion,
+    TokenUsuario,
 )
+
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
+    UserMeUpdate,
+    CrearPasswordPrimeraVez,
     UsuarioGrupoCreate,
     UsuarioModuloCreate,
     UsuarioAccionCreate,
     UsuarioPermisosMasivosCreate,
 )
+
 from app.services.session_service import resetear_ultima_sesion
+from app.services.email_service import enviar_correo_html
 
 
 async def create_user(user_in: UserCreate) -> User:
@@ -38,14 +50,27 @@ async def create_user(user_in: UserCreate) -> User:
             detail="La CURP ya está registrada en el sistema.",
         )
 
-    user_data = user_in.model_dump(exclude={"password"})
-    user_data["contrasena_hasheada"] = get_password_hash(user_in.password)
+    user_data = user_in.model_dump()
+
+    # El usuario se crea sin contraseña.
+    # La contraseña se creará después mediante el enlace enviado por correo.
+    user_data["contrasena_hasheada"] = None
 
     user = await User.create(**user_data)
+
+    await user.fetch_related("estatus", "instancia")
+
     return user
 
 
 async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
+    """
+    Actualización administrativa de usuario.
+
+    Permite corregir datos administrativos del usuario, pero NO permite
+    modificar contraseña. La contraseña se maneja en flujos separados.
+    """
+
     user = await User.get_or_none(id=user_id)
 
     if not user:
@@ -80,11 +105,6 @@ async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
                 detail="La CURP ya está registrada en otro usuario.",
             )
 
-    password = update_data.pop("password", None)
-
-    if password:
-        update_data["contrasena_hasheada"] = get_password_hash(password)
-
     for field, value in update_data.items():
         setattr(user, field, value)
 
@@ -92,6 +112,283 @@ async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
     await user.fetch_related("estatus", "instancia")
 
     return user
+
+
+
+
+async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
+    """
+    Actualiza los datos básicos del usuario autenticado.
+
+    Permite modificar SOLO:
+    - nombre
+    - primer_apellido
+    - segundo_apellido
+    - correo_electronico
+    - numero_telefono
+    - contraseña, si envía password_actual y password_nueva
+
+    No permite modificar:
+    - CURP
+    - estatus
+    - instancia
+    - permisos
+    - grupos
+    - módulos
+    - acciones
+    """
+
+    user = await User.get_or_none(id=user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    update_data = user_in.model_dump(exclude_unset=True)
+
+    password_actual = update_data.pop("password_actual", None)
+    password_nueva = update_data.pop("password_nueva", None)
+
+    nuevo_correo = update_data.get("correo_electronico")
+    if nuevo_correo:
+        correo_duplicado = await User.filter(
+            correo_electronico=nuevo_correo
+        ).exclude(id=user_id).exists()
+
+        if correo_duplicado:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El correo ya está registrado en otro usuario.",
+            )
+
+    for field, value in update_data.items():
+        setattr(user, field, value)
+
+    if password_nueva:
+        if not user.contrasena_hasheada:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="La cuenta aún no tiene contraseña configurada. Usa el enlace de activación.",
+            )
+
+        if not verify_password(password_actual, user.contrasena_hasheada):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="La contraseña actual es incorrecta.",
+            )
+
+        user.contrasena_hasheada = get_password_hash(password_nueva)
+
+        # Invalidamos tokens activos para obligar a iniciar sesión nuevamente.
+        user.token_version += 1
+        user.intentos_login = 0
+
+    await user.save()
+    await user.fetch_related("estatus", "instancia")
+
+    return user
+
+
+
+
+
+
+def render_template_email(nombre_template: str, contexto: dict) -> str:
+    """
+    Carga una plantilla HTML desde app/templates y reemplaza variables simples.
+
+    Ejemplo:
+    {{ nombre_completo }}
+    {{ curp }}
+    {{ link_crear_password }}
+    {{ sistemas_html }}
+    """
+
+    ruta_template = (
+        Path(__file__).resolve().parent.parent
+        / "templates"
+        / nombre_template
+    )
+
+    html = ruta_template.read_text(encoding="utf-8")
+
+    for clave, valor in contexto.items():
+        html = html.replace(f"{{{{ {clave} }}}}", str(valor))
+
+    return html
+
+
+
+
+async def generar_token_creacion_password(user: User) -> str:
+    """
+    Genera un token para que el usuario cree su contraseña por primera vez.
+
+    Si ya existía otro token de creación de contraseña para este usuario,
+    lo eliminamos para dejar activo únicamente el más reciente.
+    """
+
+    await TokenUsuario.filter(
+        usuario_id=user.id,
+        tipo="CREAR_CONTRASENA",
+    ).delete()
+
+    token = token_urlsafe(48)
+
+    fecha_expiracion = datetime.now(timezone.utc) + timedelta(hours=24)
+
+    await TokenUsuario.create(
+        usuario_id=user.id,
+        token=token,
+        tipo="CREAR_CONTRASENA",
+        fecha_expiracion=fecha_expiracion,
+    )
+
+    return token
+
+
+async def obtener_sistemas_usuario_para_correo(user_id: UUID) -> str:
+    """
+    Obtiene los grupos/sistemas asignados al usuario y los convierte en HTML
+    para incluirlos en el correo de bienvenida.
+    """
+
+    permisos = await obtener_permisos_usuario(user_id)
+    grupos = permisos.get("grupos", [])
+
+    if not grupos:
+        return "<li>No tienes sistemas asignados todavía.</li>"
+
+    html = ""
+
+    for grupo in grupos:
+        html += f"<li><strong>{grupo['nombre']}</strong>"
+
+        modulos = grupo.get("modulos", [])
+
+        if modulos:
+            html += "<ul>"
+
+            for modulo in modulos:
+                html += f"<li>{modulo['nombre']}</li>"
+
+            html += "</ul>"
+
+        html += "</li>"
+
+    return html
+
+
+async def enviar_correo_bienvenida_usuario(user: User) -> None:
+    """
+    Envía el correo de bienvenida con el enlace para crear contraseña.
+
+    Este correo debe enviarse después de que el administrador ya haya
+    asignado permisos al usuario.
+    """
+
+    if user.contrasena_hasheada:
+        return
+
+    token = await generar_token_creacion_password(user)
+
+    link_crear_password = (
+        f"{settings.FRONTEND_URL}/crear-password?token={token}"
+    )
+
+    sistemas_html = await obtener_sistemas_usuario_para_correo(user.id)
+
+    nombre_completo = " ".join(
+        parte
+        for parte in [
+            user.nombre,
+            user.primer_apellido,
+            user.segundo_apellido,
+        ]
+        if parte
+    )
+
+    html = render_template_email(
+        "email_bienvenida.html",
+        {
+            "nombre_completo": nombre_completo,
+            "curp": user.curp,
+            "correo_electronico": user.correo_electronico,
+            "link_crear_password": link_crear_password,
+            "sistemas_html": sistemas_html,
+        },
+    )
+
+    enviar_correo_html(
+        destinatario=user.correo_electronico,
+        asunto="Bienvenida/o - Activación de cuenta institucional",
+        html=html,
+    )
+
+
+
+
+
+async def crear_password_primera_vez(token: str, password: str):
+    """
+    Permite crear la contraseña por primera vez usando el token enviado por correo.
+
+    Este flujo se usa cuando el usuario todavía no tiene contraseña configurada.
+    """
+
+    token_db = await TokenUsuario.get_or_none(
+        token=token,
+        tipo="CREAR_CONTRASENA",
+    ).prefetch_related("usuario")
+
+    if not token_db:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token inválido o ya utilizado.",
+        )
+
+    ahora = datetime.now(timezone.utc)
+
+    if token_db.fecha_expiracion and token_db.fecha_expiracion < ahora:
+        await token_db.delete()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El enlace para crear contraseña ha expirado.",
+        )
+
+    user = token_db.usuario
+
+    if user.contrasena_hasheada:
+        await token_db.delete()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta ya tiene una contraseña configurada.",
+        )
+
+    user.contrasena_hasheada = get_password_hash(password)
+    user.intentos_login = 0
+
+    await user.save(
+        update_fields=[
+            "contrasena_hasheada",
+            "intentos_login",
+            "fecha_actualizacion",
+        ]
+    )
+
+    await token_db.delete()
+
+    return {
+        "message": "Contraseña creada correctamente. Ya puedes iniciar sesión.",
+    }
+
+
+
+
 
 
 async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
@@ -482,9 +779,6 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
     Grupo
       -> Módulos
           -> Acciones
-
-    Esto evita regresar tres listas separadas y facilita que el frontend
-    pinte los permisos agrupados correctamente.
     """
 
     grupos_asignados = await UsuarioGrupo.filter(
@@ -508,10 +802,6 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
 
     grupos_dict = {}
 
-    # ==========================================
-    # 1. AGREGAR GRUPOS
-    # ==========================================
-
     for item in grupos_asignados:
         grupo = item.grupo
         grupo_id = str(grupo.id)
@@ -523,10 +813,6 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
                 "descripcion": grupo.descripcion,
                 "modulos": {},
             }
-
-    # ==========================================
-    # 2. AGREGAR MÓDULOS DENTRO DE SU GRUPO
-    # ==========================================
 
     for item in modulos_asignados:
         modulo = item.modulo
@@ -550,10 +836,6 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
                 "descripcion": modulo.descripcion,
                 "acciones": {},
             }
-
-    # ==========================================
-    # 3. AGREGAR ACCIONES DENTRO DE SU MÓDULO
-    # ==========================================
 
     for item in acciones_asignadas:
         accion = item.accion
@@ -586,10 +868,6 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
             "descripcion": accion.descripcion,
         }
 
-    # ==========================================
-    # 4. CONVERTIR DICCIONARIOS A LISTAS
-    # ==========================================
-
     grupos = []
 
     for grupo_data in grupos_dict.values():
@@ -597,25 +875,22 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
 
         for modulo_data in grupo_data["modulos"].values():
             acciones = list(modulo_data["acciones"].values())
-
-            # Ordenamos acciones alfabéticamente
             acciones.sort(key=lambda accion: accion["nombre"])
 
             modulo_data["acciones"] = acciones
             modulos.append(modulo_data)
 
-        # Ordenamos módulos alfabéticamente
         modulos.sort(key=lambda modulo: modulo["nombre"])
 
         grupo_data["modulos"] = modulos
         grupos.append(grupo_data)
 
-    # Ordenamos grupos alfabéticamente
     grupos.sort(key=lambda grupo: grupo["nombre"])
 
     return {
         "grupos": grupos,
     }
+
 # ==========================================
 # CATÁLOGO COMPLETO DE PERMISOS
 # ==========================================
@@ -669,6 +944,9 @@ async def get_catalogo_permisos_por_grupo(grupo_id: UUID):
 
 
 
+
+
+
 # ==========================================
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ==========================================
@@ -710,8 +988,6 @@ async def assign_user_permisos_masivos(
             detail="Usuario no encontrado.",
         )
 
-
-
     # Contadores para informar cuántos permisos nuevos se asignaron.
     # Si el permiso ya existía, no se cuenta como nuevo.
     grupos_asignados = 0
@@ -723,7 +999,6 @@ async def assign_user_permisos_masivos(
     # ==========================================
 
     if data.grupo_id:
-        # Validamos que el grupo exista.
         grupo = await Grupo.get_or_none(id=data.grupo_id)
 
         if not grupo:
@@ -732,8 +1007,6 @@ async def assign_user_permisos_masivos(
                 detail="Grupo no encontrado.",
             )
 
-        # get_or_create evita duplicados.
-        # Si ya existe la relación usuario-grupo, no la vuelve a crear.
         _, creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
             grupo_id=data.grupo_id,
@@ -747,7 +1020,6 @@ async def assign_user_permisos_masivos(
     # ==========================================
 
     for modulo_id in data.modulo_ids:
-        # Buscamos el módulo y cargamos su grupo padre.
         modulo = await Modulo.get_or_none(id=modulo_id).prefetch_related(
             "grupo"
         )
@@ -758,17 +1030,12 @@ async def assign_user_permisos_masivos(
                 detail=f"Módulo no encontrado: {modulo_id}",
             )
 
-        # Si el request mandó un grupo_id, validamos que este módulo
-        # realmente pertenezca a ese grupo.
-        # Esto evita asignar por error módulos de otro sistema.
         if data.grupo_id and modulo.grupo_id != data.grupo_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"El módulo {modulo.nombre} no pertenece al grupo indicado.",
             )
 
-        # Al asignar un módulo, también aseguramos que el usuario tenga
-        # asignado el grupo padre del módulo.
         _, grupo_creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
             grupo_id=modulo.grupo_id,
@@ -777,7 +1044,6 @@ async def assign_user_permisos_masivos(
         if grupo_creado:
             grupos_asignados += 1
 
-        # Ahora sí asignamos el módulo al usuario.
         _, modulo_creado = await UsuarioModulo.get_or_create(
             usuario_id=user_id,
             modulo_id=modulo_id,
@@ -791,9 +1057,6 @@ async def assign_user_permisos_masivos(
     # ==========================================
 
     for accion_id in data.accion_ids:
-        # Buscamos la acción y cargamos:
-        # - su módulo padre
-        # - el grupo padre de ese módulo
         accion = await Accion.get_or_none(id=accion_id).prefetch_related(
             "modulo",
             "modulo__grupo",
@@ -805,16 +1068,12 @@ async def assign_user_permisos_masivos(
                 detail=f"Acción no encontrada: {accion_id}",
             )
 
-        # Si el request mandó un grupo_id, validamos que esta acción
-        # realmente pertenezca a ese grupo.
         if data.grupo_id and accion.modulo.grupo_id != data.grupo_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"La acción {accion.nombre} no pertenece al grupo indicado.",
             )
 
-        # Al asignar una acción, también aseguramos que el usuario tenga
-        # asignado el grupo padre.
         _, grupo_creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
             grupo_id=accion.modulo.grupo_id,
@@ -823,7 +1082,6 @@ async def assign_user_permisos_masivos(
         if grupo_creado:
             grupos_asignados += 1
 
-        # También aseguramos que tenga asignado el módulo padre.
         _, modulo_creado = await UsuarioModulo.get_or_create(
             usuario_id=user_id,
             modulo_id=accion.modulo_id,
@@ -832,7 +1090,6 @@ async def assign_user_permisos_masivos(
         if modulo_creado:
             modulos_asignados += 1
 
-        # Finalmente asignamos la acción específica.
         _, accion_creada = await UsuarioAccion.get_or_create(
             usuario_id=user_id,
             accion_id=accion_id,
@@ -841,19 +1098,36 @@ async def assign_user_permisos_masivos(
         if accion_creada:
             acciones_asignadas += 1
 
+    # Esta parte debe ir FUERA de los for.
+    permisos_nuevos_asignados = (
+        grupos_asignados > 0
+        or modulos_asignados > 0
+        or acciones_asignadas > 0
+    )
+
     # Si se asignó al menos un permiso nuevo, actualizamos la última sesión.
-    if grupos_asignados > 0 or modulos_asignados > 0 or acciones_asignadas > 0:
+    if permisos_nuevos_asignados:
         await resetear_ultima_sesion(user)
+
+    correo_bienvenida_enviado = False
+
+    # Si el usuario todavía no tiene contraseña, enviamos correo de bienvenida.
+    # Lo mandamos después de asignar permisos para que el correo ya incluya sistemas/módulos.
+    if permisos_nuevos_asignados and not user.contrasena_hasheada:
+        await enviar_correo_bienvenida_usuario(user)
+        correo_bienvenida_enviado = True
 
     # Consultamos los permisos finales del usuario para devolverlos
     # ya actualizados en la respuesta.
     permisos = await obtener_permisos_usuario(user_id)
 
     return {
-    "message": "Permisos asignados correctamente.",
-    "user_id": str(user_id),
-    "grupos_asignados": grupos_asignados,
-    "modulos_asignados": modulos_asignados,
-    "acciones_asignadas": acciones_asignadas,
-    "permisos": permisos,
-}
+        "message": "Permisos asignados correctamente.",
+        "user_id": str(user_id),
+        "grupos_asignados": grupos_asignados,
+        "modulos_asignados": modulos_asignados,
+        "acciones_asignadas": acciones_asignadas,
+        "correo_bienvenida_enviado": correo_bienvenida_enviado,
+        "permisos": permisos,
+    }
+
