@@ -1,4 +1,5 @@
 from uuid import UUID
+
 from pathlib import Path
 from secrets import token_urlsafe
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,7 @@ from app.schemas.user import (
 
 from app.services.session_service import resetear_ultima_sesion
 from app.services.email_service import enviar_correo_html
+from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
 
 
 async def create_user(user_in: UserCreate) -> User:
@@ -201,9 +203,7 @@ def render_template_email(nombre_template: str, contexto: dict) -> str:
 
     Ejemplo:
     {{ nombre_completo }}
-    {{ curp }}
-    {{ link_crear_password }}
-    {{ sistemas_html }}
+    {{ link_recuperacion }}
     """
 
     ruta_template = (
@@ -218,6 +218,7 @@ def render_template_email(nombre_template: str, contexto: dict) -> str:
         html = html.replace(f"{{{{ {clave} }}}}", str(valor))
 
     return html
+
 
 
 
@@ -266,15 +267,7 @@ async def obtener_sistemas_usuario_para_correo(user_id: UUID) -> str:
     for grupo in grupos:
         html += f"<li><strong>{grupo['nombre']}</strong>"
 
-        modulos = grupo.get("modulos", [])
-
-        if modulos:
-            html += "<ul>"
-
-            for modulo in modulos:
-                html += f"<li>{modulo['nombre']}</li>"
-
-            html += "</ul>"
+       
 
         html += "</li>"
 
@@ -326,7 +319,6 @@ async def enviar_correo_bienvenida_usuario(user: User) -> None:
         asunto="Bienvenida/o - Activación de cuenta institucional",
         html=html,
     )
-
 
 
 
@@ -390,9 +382,59 @@ async def crear_password_primera_vez(token: str, password: str):
 
 
 
+async def reenviar_correo_creacion_password(user_id: UUID):
+    """
+    Reenvía el correo para crear contraseña por primera vez.
+
+    Solo aplica para usuarios que todavía no tienen contraseña configurada.
+    Al generar un nuevo token, se eliminan tokens anteriores del mismo tipo.
+    """
+
+    user = await User.get_or_none(id=user_id).prefetch_related(
+        "estatus",
+        "instancia",
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    if user.contrasena_hasheada:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El usuario ya tiene una contraseña configurada.",
+        )
+
+    await enviar_correo_bienvenida_usuario(user)
+
+    return {
+        "message": "Correo de activación reenviado correctamente.",
+        "user_id": str(user.id),
+        "correo_electronico": user.correo_electronico,
+    }
+
+
+
+
+
+
 
 async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
-    user = await User.get_or_none(id=user_id)
+    """
+    Cambia el estatus de un usuario usando cat_estatus_usuarios.
+
+    También:
+    - reinicia intentos_login si el nuevo estatus es Activo
+    - incrementa token_version para invalidar sesiones activas
+    - envía correo notificando el cambio de estatus
+    """
+
+    user = await User.get_or_none(id=user_id).prefetch_related(
+        "estatus",
+        "instancia",
+    )
 
     if not user:
         raise HTTPException(
@@ -408,22 +450,43 @@ async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
             detail="Estatus de usuario no encontrado.",
         )
 
-    # 1. Aplicamos los cambios al objeto en memoria
+    estatus_anterior = user.estatus
+
+    # Si el usuario ya tiene ese mismo estatus, no hacemos nada.
+    if estatus_anterior and estatus_anterior.id == estatus_usuario.id:
+        return user
+
+    # Cambiamos el estatus en memoria.
     user.estatus = estatus_usuario
+
+    # Si se reactiva la cuenta, reiniciamos intentos fallidos.
     if estatus_usuario.nombre.lower() == "activo":
         user.intentos_login = 0
 
-    # 2. Guardamos SOLO los campos que modificamos en memoria
-    await user.save(update_fields=["estatus_id", "intentos_login"])
+    # Guardamos el cambio de estatus.
+    await user.save(
+        update_fields=[
+            "estatus_id",
+            "intentos_login",
+        ]
+    )
 
-    # 3. Incrementamos la versión del token de forma atómica directo en la DB
+    # Invalidamos tokens activos para que el cambio de estatus tenga efecto.
     await User.filter(id=user_id).update(
         token_version=F("token_version") + 1
     )
 
-    # 4. Refrescamos el objeto local con los últimos datos de la DB (incluyendo la nueva versión)
+    # Refrescamos el usuario para devolver datos actualizados.
     await user.refresh_from_db()
     await user.fetch_related("estatus", "instancia")
+
+    # Enviamos correo notificando el cambio de estatus.
+    await enviar_correo_cambio_estatus_usuario(
+        user=user,
+        estatus_anterior=estatus_anterior,
+        estatus_nuevo=estatus_usuario,
+        motivo="El estatus de su cuenta fue actualizado por un administrador.",
+    )
 
     return user
 
@@ -1130,4 +1193,7 @@ async def assign_user_permisos_masivos(
         "correo_bienvenida_enviado": correo_bienvenida_enviado,
         "permisos": permisos,
     }
+
+
+
 

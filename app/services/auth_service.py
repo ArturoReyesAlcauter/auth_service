@@ -1,13 +1,18 @@
 import pyotp
 
-from fastapi import HTTPException, status
-from tortoise.expressions import F
-from datetime import datetime
+from pathlib import Path
+from secrets import token_urlsafe
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from fastapi import HTTPException, status
+from tortoise.expressions import F
+
+from app.core.config import settings
 from app.core.security import verify_password, get_password_hash
-from app.models.user import User, EstatusUsuario
-from app.models.user import TokenUsuario
+from app.models.user import User, EstatusUsuario, TokenUsuario
+from app.services.email_service import enviar_correo_html
+from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
 
 
 MAX_INTENTOS_LOGIN = 5
@@ -17,7 +22,8 @@ async def authenticate_user(curp: str, password: str):
     Valida CURP y contraseña.
 
     - Si la contraseña es incorrecta, suma intentos_login.
-    - Si llega a 5 intentos, bloquea el login.
+    - Si llega a 5 intentos, cambia el estatus a "Intentos en exceso sesión".
+    - Cuando bloquea por intentos, notifica al usuario por correo.
     - Si la contraseña es correcta, reinicia intentos_login a 0.
     """
 
@@ -32,14 +38,13 @@ async def authenticate_user(curp: str, password: str):
         get_password_hash(password)
         return None
 
-    """Si el usuario existe pero no tiene contraseña hasheada, es porque aún no activó su cuenta."""
-    #esta, para evitar que alguien intente iniciar sesión antes de crear contraseña
+    # Si el usuario existe pero no tiene contraseña hasheada,
+    # es porque aún no activó su cuenta.
     if not user.contrasena_hasheada:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="La cuenta aún no tiene contraseña configurada. Revisa el correo de activación o solicita un nuevo enlace.",
-    )
-
+        )
 
     if user.intentos_login >= MAX_INTENTOS_LOGIN:
         raise HTTPException(
@@ -49,10 +54,12 @@ async def authenticate_user(curp: str, password: str):
 
     if not verify_password(password, user.contrasena_hasheada):
         # 2. MITIGACIÓN DE RACE CONDITION
-        # Sumamos el intento directamente en la DB
-        await User.filter(id=user.id).update(intentos_login=F("intentos_login") + 1)
-        
-        # Refrescamos el objeto local para tener el contador real
+        # Sumamos el intento directamente en la DB.
+        await User.filter(id=user.id).update(
+            intentos_login=F("intentos_login") + 1
+        )
+
+        # Refrescamos el objeto local para tener el contador real.
         await user.refresh_from_db(fields=["intentos_login"])
 
         # 3. VERIFICACIÓN Y CAMBIO DE ESTATUS POR BLOQUEO
@@ -67,12 +74,29 @@ async def authenticate_user(curp: str, password: str):
                     detail="No existe el estatus 'Intentos en exceso sesión' en cat_estatus_usuarios.",
                 )
 
-            # Asignamos el nuevo estatus en memoria
+            # Guardamos el estatus anterior antes de cambiarlo.
+            estatus_anterior = user.estatus
+
+            # Asignamos el nuevo estatus en memoria.
             user.estatus = estatus_bloqueado
 
-            # Guardamos únicamente el campo estatus_id, ya que los intentos se guardaron antes con F()
+            # Guardamos únicamente el campo estatus_id.
+            # Los intentos_login ya se actualizaron antes con F().
             await user.save(update_fields=["estatus_id"])
-            
+
+            # Invalidamos tokens activos del usuario para cerrar sesiones previas.
+            await User.filter(id=user.id).update(
+                token_version=F("token_version") + 1
+            )
+
+            # Notificamos por correo el bloqueo de cuenta.
+            await enviar_correo_cambio_estatus_usuario(
+                user=user,
+                estatus_anterior=estatus_anterior,
+                estatus_nuevo=estatus_bloqueado,
+                motivo="Su cuenta fue bloqueada por exceder el número máximo de intentos de inicio de sesión.",
+            )
+
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Usuario bloqueado por exceder el número máximo de intentos de inicio de sesión.",
@@ -163,3 +187,163 @@ async def store_refresh_token(user_id: UUID, token: str, expire_date: datetime):
 async def revoke_refresh_token(token: str):
     """Invalida un refresh token específico (ej. para Logout)."""
     await TokenUsuario.filter(token=token, tipo="REFRESH_TOKEN").delete()
+    
+def render_template_email(nombre_template: str, contexto: dict) -> str:
+    """
+    Carga una plantilla HTML desde app/templates y reemplaza variables simples.
+
+    Ejemplo:
+    {{ nombre_completo }}
+    {{ link_recuperacion }}
+    """
+
+    ruta_template = (
+        Path(__file__).resolve().parent.parent
+        / "templates"
+        / nombre_template
+    )
+
+    html = ruta_template.read_text(encoding="utf-8")
+
+    for clave, valor in contexto.items():
+        html = html.replace(f"{{{{ {clave} }}}}", str(valor))
+
+    return html
+
+
+async def generar_token_recuperacion_password(user: User) -> str:
+    """
+    Genera un token temporal para recuperar/restablecer contraseña.
+
+    Elimina tokens anteriores del mismo tipo para que solo quede activo
+    el enlace más reciente.
+    """
+
+    await TokenUsuario.filter(
+        usuario_id=user.id,
+        tipo="RECUPERACION_CONTRASENA",
+    ).delete()
+
+    token = token_urlsafe(48)
+
+    fecha_expiracion = datetime.now(timezone.utc) + timedelta(hours=2)
+
+    await TokenUsuario.create(
+        usuario_id=user.id,
+        token=token,
+        tipo="RECUPERACION_CONTRASENA",
+        fecha_expiracion=fecha_expiracion,
+    )
+
+    return token
+
+
+async def solicitar_recuperacion_password(correo_electronico: str):
+    """
+    Solicita recuperación de contraseña.
+
+    Por seguridad, siempre responde el mismo mensaje aunque el correo no exista.
+    Así evitamos revelar qué correos están registrados.
+    """
+
+    respuesta_generica = {
+        "message": "Si la cuenta existe, se enviará un correo con instrucciones para restablecer la contraseña.",
+    }
+
+    user = await User.get_or_none(
+        correo_electronico=correo_electronico,
+    )
+
+    if not user:
+        return respuesta_generica
+
+    if not user.contrasena_hasheada:
+        return respuesta_generica
+
+    token = await generar_token_recuperacion_password(user)
+
+    link_recuperacion = (
+        f"{settings.FRONTEND_URL}/restablecer-password?token={token}"
+    )
+
+    nombre_completo = " ".join(
+        parte
+        for parte in [
+            user.nombre,
+            user.primer_apellido,
+            user.segundo_apellido,
+        ]
+        if parte
+    )
+
+    html = render_template_email(
+        "email_recuperacion_password.html",
+        {
+            "nombre_completo": nombre_completo,
+            "link_recuperacion": link_recuperacion,
+        },
+    )
+
+    enviar_correo_html(
+        destinatario=user.correo_electronico,
+        asunto="Restablecimiento de contraseña",
+        html=html,
+    )
+
+    return respuesta_generica
+
+
+async def restablecer_password(token: str, password_nueva: str):
+    """
+    Restablece la contraseña usando un token de recuperación.
+    """
+
+    token_db = await TokenUsuario.get_or_none(
+        token=token,
+        tipo="RECUPERACION_CONTRASENA",
+    ).prefetch_related("usuario")
+
+    if not token_db:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token inválido o ya utilizado.",
+        )
+
+    ahora = datetime.now(timezone.utc)
+
+    if token_db.fecha_expiracion and token_db.fecha_expiracion < ahora:
+        await token_db.delete()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El enlace para restablecer contraseña ha expirado.",
+        )
+
+    user = token_db.usuario
+
+    if not user.contrasena_hasheada:
+        await token_db.delete()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta aún no tiene contraseña configurada. Usa el enlace de activación.",
+        )
+
+    user.contrasena_hasheada = get_password_hash(password_nueva)
+    user.intentos_login = 0
+    user.token_version += 1
+
+    await user.save(
+        update_fields=[
+            "contrasena_hasheada",
+            "intentos_login",
+            "token_version",
+            "fecha_actualizacion",
+        ]
+    )
+
+    await token_db.delete()
+
+    return {
+        "message": "Contraseña restablecida correctamente. Ya puedes iniciar sesión.",
+    }

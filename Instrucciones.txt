@@ -1,95 +1,64 @@
-2. Sincronizar dependencias con uv
+2. Traer los últimos cambios de Git
+git pull
+
+
+3. Sincronizar dependencias con uv
 uv sync
-3. Activar el entorno virtual
 
-En CMD:
 
-.venv\Scripts\activate.bat
+4. Revisar o crear archivo .env (Si no existe, créalo): notepad .env
 
-Debe verse algo así:
-
-(auth_service) C:\Users\artur\Documents\Proyectos FastAPI\auth_service>
-
-Si sigue apareciendo (api-mp), no pasa nada mientras esto muestre la ruta correcta:
-
-echo %VIRTUAL_ENV%
-
-Debe salir:
-
-C:\Users\artur\Documents\Proyectos FastAPI\auth_service\.venv
-4. Crear archivo .env
-
-Si no existe, créalo:
-
-notepad .env
-
-Contenido recomendado para PostgreSQL local:
-
-PROJECT_NAME="Login PorTusDerechos"
+PROJECT_NAME="API Registro de Medidas de Protección - SNDIF"
 VERSION="1.0.0"
+DATABASE_URL="postgres://postgres:12A08007449@127.0.0.1:5432/auth_service_db?schema=public"
 
-DATABASE_URL="postgres://postgres:TU_PASSWORD@127.0.0.1:5432/auth_service_db"
-
-SECRET_KEY="CAMBIA_ESTA_CLAVE_POR_UNA_LARGA_Y_SEGURA"
+SECRET_KEY="7934e131fad83b6e93474687873d6574e8bce05d0865e7b213ad3695d6147435"
 ALGORITHM="HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES=120
+ACCESS_TOKEN_EXPIRE_MINUTES=15
+REFRESH_TOKEN_EXPIRE_DAYS=7
 
-Ejemplo usando tu base local:
-
-DATABASE_URL="postgres://postgres:12A08007449@127.0.0.1:5432/auth_service_db"
-5. Crear base de datos en pgAdmin
-
-
-8. Inicializar Aerich
-
-Solo la primera vez en una PC nueva:
-
-aerich init -t app.core.config.TORTOISE_ORM
-
-Si dice que ya está inicializado:
-
-Aerich config pyproject.toml already inited.
-
-No pasa nada.
-
-9. Crear tablas en la base de datos
-
-Primera vez, si todavía no existen tablas:
-
-aerich init-db
-
-Si te dice:
-
-App 'models' is already initialized. Delete migrations\models and try again.
-
+5. Verificar que el proyecto lea la base correcta
 Ejecuta:
+uv run python -c "from app.core.config import settings; print(settings.DATABASE_URL)"
 
-rmdir /S /Q migrations\models
-aerich init-db
-10. Ejecutar seed
+
+6. Aplicar migraciones pendientes
+Después de un git pull, normalmente debes ejecutar:
+uv run aerich upgrade
+
+7. Ejecutar seed
+Después de tener la base con tablas, ejecuta:
 uv run python seed.py
 
-O si el entorno ya está activado:
+9. Levantar el proyecto
+Usa este comando recomendado:
+uv run python -m uvicorn app.main:app --reload --port 8001
 
-python seed.py
-11. Levantar el proyecto
-
-Recomendado:
-
+Si no hay bloqueo, también puede funcionar:
 uv run uvicorn app.main:app --reload --port 8001
 
-O también:
 
-uvicorn app.main:app --reload --port 8001
-12. Abrir documentación
-http://127.0.0.1:8001/docs
+______________________________________________________________________________________________
+Flujo rápido normal después de git pull
 
-
-Reiniciar la base de datos
-uv run python reset_db.py
+Este es el flujo que más vas a usar:
+cd "C:\Users\artur\Documents\Proyectos FastAPI\auth_service"
+git pull
+uv sync
 uv run aerich upgrade
 uv run python seed.py
+uv run python -m uvicorn app.main:app --reload --port 8001
 
+______________________________________________________________________________________________
+Si solo quieres levantar el proyecto y no hubo cambios de migraciones
 
-uv run aerich migrate --name cambio_grupos
-uv run aerich upgrade 
+Puedes hacer:
+
+cd "C:\Users\artur\Documents\Proyectos FastAPI\auth_service"
+git pull
+uv sync
+uv run python -m uvicorn app.main:app --reload --port 8001
+
+Pero si hubo cambios en modelos o migraciones, sí ejecuta:
+
+uv run aerich upgrade

@@ -1,8 +1,27 @@
 from uuid import UUID
+import re
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr, field_validator
 
 
+# ==========================================
+# CONFIGURACIÓN DE CONTRASEÑAS
+# ==========================================
+
+PASSWORD_REGEX = (
+    r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)"
+    r"(?=.*[@$!%*?&._-])[A-Za-z\d@$!%*?&._-]{8,}$"
+)
+
+PASSWORD_ERROR_MSG = (
+    "La contraseña debe tener mínimo 8 caracteres, una mayúscula, "
+    "una minúscula, un número y un carácter especial."
+)
+
+
+# ==========================================
+# JWT / LOGIN
+# ==========================================
 # Lo que la API devuelve cuando el login es exitoso
 class Token(BaseModel):
     access_token: str
@@ -33,3 +52,35 @@ class TwoFactorVerifyRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
+    
+    
+
+# ==========================================
+# RECUPERACIÓN DE CONTRASEÑA
+# ==========================================
+
+class RecuperarPasswordRequest(BaseModel):
+    """
+    Body para solicitar el correo de recuperación de contraseña.
+
+    Este endpoint se usa cuando el usuario ya tiene contraseña,
+    pero la olvidó.
+    """
+
+    correo_electronico: EmailStr
+
+
+class RestablecerPasswordRequest(BaseModel):
+    """
+    Body para restablecer la contraseña usando el token enviado por correo.
+    """
+
+    token: str
+    password_nueva: str = Field(..., min_length=8)
+
+    @field_validator("password_nueva")
+    @classmethod
+    def validar_password_fuerte(cls, v: str) -> str:
+        if not re.match(PASSWORD_REGEX, v):
+            raise ValueError(PASSWORD_ERROR_MSG)
+        return v

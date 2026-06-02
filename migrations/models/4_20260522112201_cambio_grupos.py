@@ -2,28 +2,69 @@ from tortoise import BaseDBAsyncClient
 
 RUN_IN_TRANSACTION = True
 
-
 async def upgrade(db: BaseDBAsyncClient) -> str:
     return """
         ALTER TABLE "modulos" DROP CONSTRAINT IF EXISTS "fk_modulos_registro_43d9ae21";
+
         CREATE TABLE IF NOT EXISTS "grupos" (
-    "id" UUID NOT NULL PRIMARY KEY,
-    "nombre" VARCHAR(100) NOT NULL,
-    "descripcion" VARCHAR(200)
-);
-COMMENT ON COLUMN "grupos"."nombre" IS 'Ej: VF, MH, MP, RNCAS';
+            "id" UUID NOT NULL PRIMARY KEY,
+            "nombre" VARCHAR(100) NOT NULL,
+            "descripcion" VARCHAR(200)
+        );
+
+        COMMENT ON COLUMN "grupos"."nombre" IS 'Ej: VF, MH, MP, RNCAS';
+
         CREATE TABLE IF NOT EXISTS "usuario_grupos" (
-    "id" UUID NOT NULL PRIMARY KEY,
-    "fecha_asignacion" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "grupo_id" UUID NOT NULL REFERENCES "grupos" ("id") ON DELETE CASCADE,
-    "usuario_id" UUID NOT NULL REFERENCES "usuarios" ("id") ON DELETE CASCADE,
-    CONSTRAINT "uid_usuario_gru_usuario_d6502a" UNIQUE ("usuario_id", "grupo_id")
-);
-        ALTER TABLE "modulos" RENAME COLUMN "registro_principal_id" TO "grupo_id";
+            "id" UUID NOT NULL PRIMARY KEY,
+            "fecha_asignacion" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "grupo_id" UUID NOT NULL REFERENCES "grupos" ("id") ON DELETE CASCADE,
+            "usuario_id" UUID NOT NULL REFERENCES "usuarios" ("id") ON DELETE CASCADE,
+            CONSTRAINT "uid_usuario_gru_usuario_d6502a" UNIQUE ("usuario_id", "grupo_id")
+        );
+
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                AND table_name = 'modulos'
+                AND column_name = 'registro_principal_id'
+            )
+            AND NOT EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                AND table_name = 'modulos'
+                AND column_name = 'grupo_id'
+            ) THEN
+                ALTER TABLE "modulos" RENAME COLUMN "registro_principal_id" TO "grupo_id";
+            END IF;
+        END $$;
+
         DROP TABLE IF EXISTS "registros_principales";
         DROP TABLE IF EXISTS "usuario_registros";
-        ALTER TABLE "modulos" ADD CONSTRAINT "fk_modulos_grupos_09d6fdc6" FOREIGN KEY ("grupo_id") REFERENCES "grupos" ("id") ON DELETE CASCADE;"""
 
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                AND table_name = 'modulos'
+                AND column_name = 'grupo_id'
+            ) THEN
+                ALTER TABLE "modulos"
+                DROP CONSTRAINT IF EXISTS "fk_modulos_grupos_09d6fdc6";
+
+                ALTER TABLE "modulos"
+                ADD CONSTRAINT "fk_modulos_grupos_09d6fdc6"
+                FOREIGN KEY ("grupo_id")
+                REFERENCES "grupos" ("id")
+                ON DELETE CASCADE;
+            END IF;
+        END $$;
+    """
 
 async def downgrade(db: BaseDBAsyncClient) -> str:
     return """

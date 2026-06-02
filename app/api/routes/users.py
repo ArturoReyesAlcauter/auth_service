@@ -158,6 +158,25 @@ async def crear_password_primera_vez(
 
 
 # ==========================================
+# Reenviar password 
+# ==========================================
+@router.post(
+    "/{user_id}/reenviar-activacion",
+    status_code=status.HTTP_200_OK,
+)
+async def reenviar_activacion_usuario(
+    user_id: UUID,
+    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+):
+    """
+    Reenvía el correo de activación para que el usuario cree su contraseña.
+
+    Solo aplica si el usuario todavía no tiene contraseña configurada.
+    """
+    return await user_service.reenviar_correo_creacion_password(user_id)
+
+
+# ==========================================
 # LISTAR USUARIOS
 # ==========================================
 
