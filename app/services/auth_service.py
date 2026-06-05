@@ -226,7 +226,7 @@ async def generar_token_recuperacion_password(user: User) -> str:
 
     token = token_urlsafe(48)
 
-    fecha_expiracion = datetime.now(timezone.utc) + timedelta(hours=2)
+    fecha_expiracion = datetime.now(timezone.utc) + timedelta(hours=24)
 
     await TokenUsuario.create(
         usuario_id=user.id,
@@ -291,6 +291,82 @@ async def solicitar_recuperacion_password(correo_electronico: str):
     )
 
     return respuesta_generica
+
+
+
+
+async def enviar_recuperacion_password_por_admin(user_id: UUID):
+    """
+    Envía un correo de recuperación de contraseña solicitado por un administrador.
+
+    Este flujo se usa cuando el usuario no puede solicitar libremente la recuperación.
+    El administrador valida la solicitud y dispara el envío del enlace.
+
+    Reglas:
+    - El usuario debe existir.
+    - El usuario ya debe tener una contraseña configurada.
+    - Se elimina cualquier token anterior de recuperación.
+    - Se genera un nuevo token con vigencia de 24 horas.
+    - Se envía correo con el enlace para restablecer contraseña.
+    """
+
+    user = await User.get_or_none(id=user_id).prefetch_related(
+        "estatus",
+        "instancia",
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    if not user.contrasena_hasheada:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El usuario aún no tiene contraseña configurada. Debe usar el flujo de activación de cuenta.",
+        )
+
+    token = await generar_token_recuperacion_password(user)
+
+    link_recuperacion = (
+        f"{settings.FRONTEND_URL}/restablecer-password?token={token}"
+    )
+
+    nombre_completo = " ".join(
+        parte
+        for parte in [
+            user.nombre,
+            user.primer_apellido,
+            user.segundo_apellido,
+        ]
+        if parte
+    )
+
+    html = render_template_email(
+        "email_recuperacion_password.html",
+        {
+            "nombre_completo": nombre_completo,
+            "link_recuperacion": link_recuperacion,
+        },
+    )
+
+    enviar_correo_html(
+        destinatario=user.correo_electronico,
+        asunto="Restablecimiento de contraseña",
+        html=html,
+    )
+
+    return {
+        "message": "Correo de recuperación de contraseña enviado correctamente.",
+        "user_id": str(user.id),
+        "correo_electronico": user.correo_electronico,
+    }
+
+
+
+
+
 
 
 async def restablecer_password(token: str, password_nueva: str):

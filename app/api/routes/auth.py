@@ -12,7 +12,6 @@ from pydantic import BaseModel
 from app.schemas.token import (
     Token,
     RefreshTokenRequest,
-    RecuperarPasswordRequest,
     RestablecerPasswordRequest,
 )
 from app.services import auth_service
@@ -364,38 +363,7 @@ async def logout(data: RefreshTokenRequest):
     return {"message": "Sesión cerrada correctamente."}
 
 
-
-
-@router.post("/logout", status_code=status.HTTP_200_OK)
-async def logout(data: RefreshTokenRequest):
-    """
-    Invalida el refresh_token en la base de datos, cerrando la sesión de ese dispositivo.
-    """
-    await auth_service.revoke_refresh_token(data.refresh_token)
-    return {"message": "Sesión cerrada correctamente."}
-
-
 # --- RECUPERACIÓN DE CONTRASEÑA ---
-
-@router.post(
-    "/recuperar-password",
-    status_code=status.HTTP_200_OK,
-)
-async def recuperar_password(
-    data: RecuperarPasswordRequest,
-):
-    """
-    Solicita un correo para restablecer contraseña.
-
-    No requiere JWT porque el usuario no puede iniciar sesión
-    si olvidó su contraseña.
-
-    Por seguridad, aunque el correo no exista, se responde el mismo mensaje.
-    """
-    return await auth_service.solicitar_recuperacion_password(
-        correo_electronico=data.correo_electronico,
-    )
-
 
 @router.post(
     "/restablecer-password",

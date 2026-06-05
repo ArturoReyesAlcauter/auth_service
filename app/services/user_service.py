@@ -39,7 +39,7 @@ from app.services.email_service import enviar_correo_html
 from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
 
 
-async def create_user(user_in: UserCreate) -> User:
+async def create_user(user_in: UserCreate, creado_por: UUID) -> User:
     if await User.exists(correo_electronico=user_in.correo_electronico):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -57,6 +57,10 @@ async def create_user(user_in: UserCreate) -> User:
     # El usuario se crea sin contraseña.
     # La contraseña se creará después mediante el enlace enviado por correo.
     user_data["contrasena_hasheada"] = None
+
+    # Guardamos quién creó al usuario.
+    # Este dato NO debe venir del frontend; se toma del usuario autenticado.
+    user_data["creado_por"] = creado_por
 
     user = await User.create(**user_data)
 
@@ -128,12 +132,13 @@ async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
     - segundo_apellido
     - correo_electronico
     - numero_telefono
-    - contraseña, si envía password_actual y password_nueva
 
     No permite modificar:
+    - contraseña
     - CURP
     - estatus
     - instancia
+    - entidad_federativa_id
     - permisos
     - grupos
     - módulos
@@ -150,9 +155,6 @@ async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
 
     update_data = user_in.model_dump(exclude_unset=True)
 
-    password_actual = update_data.pop("password_actual", None)
-    password_nueva = update_data.pop("password_nueva", None)
-
     nuevo_correo = update_data.get("correo_electronico")
     if nuevo_correo:
         correo_duplicado = await User.filter(
@@ -167,25 +169,6 @@ async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
 
     for field, value in update_data.items():
         setattr(user, field, value)
-
-    if password_nueva:
-        if not user.contrasena_hasheada:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="La cuenta aún no tiene contraseña configurada. Usa el enlace de activación.",
-            )
-
-        if not verify_password(password_actual, user.contrasena_hasheada):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="La contraseña actual es incorrecta.",
-            )
-
-        user.contrasena_hasheada = get_password_hash(password_nueva)
-
-        # Invalidamos tokens activos para obligar a iniciar sesión nuevamente.
-        user.token_version += 1
-        user.intentos_login = 0
 
     await user.save()
     await user.fetch_related("estatus", "instancia")

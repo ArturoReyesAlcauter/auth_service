@@ -83,9 +83,6 @@ class UserMeUpdate(BaseModel):
     correo_electronico: Optional[EmailStr] = Field(default=None, max_length=200)
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
 
-    password_actual: Optional[str] = None
-    password_nueva: Optional[str] = Field(default=None, min_length=8)
-
     @field_validator("password_nueva")
     @classmethod
     def validar_password_fuerte(cls, v: Optional[str]) -> Optional[str]:
