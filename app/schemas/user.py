@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 # Expresión regular para contraseñas fuertes
 PASSWORD_REGEX = r"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[@$!%*?&._-])[A-Za-z\d@$!%*?&._-]{8,}$"
@@ -82,24 +82,6 @@ class UserMeUpdate(BaseModel):
 
     correo_electronico: Optional[EmailStr] = Field(default=None, max_length=200)
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
-
-    @field_validator("password_nueva")
-    @classmethod
-    def validar_password_fuerte(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and not re.match(PASSWORD_REGEX, v):
-            raise ValueError(PASSWORD_ERROR_MSG)
-        return v
-
-    @model_validator(mode="after")
-    def validar_cambio_password(self):
-        if self.password_nueva and not self.password_actual:
-            raise ValueError("Para cambiar la contraseña debes enviar la contraseña actual.")
-
-        if self.password_actual and not self.password_nueva:
-            raise ValueError("Para cambiar la contraseña debes enviar la nueva contraseña.")
-
-        return self
-
 
 
 
