@@ -8,7 +8,6 @@ from app.schemas.user import (
     UserCreate,
     UserRead,
     UserUpdate,
-    UserMeUpdate,
     UserListPublic,
     UsuarioGrupoCreate,
     UsuarioGrupoRead,
@@ -20,6 +19,7 @@ from app.schemas.user import (
     GrupoCatalogoRead,
     UsuarioPermisosMasivosCreate,
     CrearPasswordPrimeraVez,
+    CambiarPasswordUsuario,
 )
 from app.services import user_service, auth_service
 
@@ -139,54 +139,53 @@ async def obtener_mi_usuario(
     }
 
 
-@router.patch(
-    "/me",
-    response_model=UserRead,
+
+
+# ==========================================
+# CAMBIAR MI CONTRASEÑA
+# ==========================================
+
+@router.post(
+    "/me/cambiar-password",
     status_code=status.HTTP_200_OK,
 )
-async def modificar_mi_usuario(
-    user_in: UserMeUpdate,
+async def cambiar_mi_password(
+    data: CambiarPasswordUsuario,
     current_user: User = Depends(get_current_active_user),
 ):
     """
-    Permite al usuario autenticado actualizar únicamente sus datos básicos.
+    Permite al usuario autenticado cambiar su propia contraseña.
 
-    Este endpoint está pensado para la sección "Mi cuenta" o "Mi perfil".
+    Este endpoint solo modifica la contraseña del usuario que inició sesión.
+    No permite modificar nombre, apellidos, correo, teléfono, CURP, estatus,
+    instancia ni permisos.
 
-    Campos permitidos:
-    - nombre
-    - primer_apellido
-    - segundo_apellido
-    - correo_electronico
-    - numero_telefono
+    Reglas:
+    - Requiere JWT válido.
+    - Requiere usuario activo.
+    - Requiere enviar la contraseña actual.
+    - La contraseña actual debe ser correcta.
+    - La nueva contraseña debe cumplir la política de seguridad.
+    - La nueva contraseña no puede ser igual a la contraseña actual.
 
-    No permite modificar:
-    - contraseña
-    - CURP
-    - estatus
-    - instancia
-    - entidad_federativa_id
-    - permisos
-    - grupos
-    - módulos
-    - acciones
+    Comportamiento:
+    - Guarda la nueva contraseña de forma hasheada.
+    - Reinicia intentos_login a 0.
+    - Incrementa token_version para invalidar sesiones activas.
+    - El usuario deberá iniciar sesión nuevamente.
 
-    Importante:
-    El cambio o recuperación de contraseña no se realiza desde este endpoint.
-    Si el usuario necesita cambiar su contraseña porque la olvidó o requiere
-    restablecerla, deberá solicitar apoyo al administrador del sistema.
-
-    El administrador podrá enviar un enlace temporal de recuperación de contraseña.
-    Dicho enlace expira y solo puede utilizarse una vez.
-
-    Requiere:
-    - JWT válido.
-    - Usuario activo.
+    Body esperado:
+    {
+      "password_actual": "PasswordAnterior123!",
+      "password_nueva": "PasswordNueva123!"
+    }
     """
-    return await user_service.update_me(
+    return await user_service.cambiar_password_usuario(
         user_id=current_user.id,
-        user_in=user_in,
+        data=data,
     )
+
+
 
 
 # ==========================================
@@ -352,7 +351,7 @@ async def listar_usuarios(
     Permiso requerido:
     - VER_USUARIOS
     """
-    return await user_service.get_users()
+    return await user_service.get_users(current_user.id)
 
 
 # ==========================================
@@ -391,7 +390,7 @@ async def listar_catalogo_permisos(
     Permiso requerido:
     - VER_USUARIOS
     """
-    return await user_service.get_catalogo_permisos()
+    return await user_service.get_catalogo_permisos(current_user.id)
 
 
 @router.get(
@@ -423,7 +422,10 @@ async def obtener_catalogo_permisos_por_grupo(
     Permiso requerido:
     - VER_USUARIOS
     """
-    return await user_service.get_catalogo_permisos_por_grupo(grupo_id)
+    return await user_service.get_catalogo_permisos_por_grupo(
+    grupo_id=grupo_id,
+    current_user_id=current_user.id,
+)
 
 
 # ==========================================
@@ -519,7 +521,11 @@ async def modificar_usuario(
     Permiso requerido:
     - ACTUALIZAR_USUARIO
     """
-    return await user_service.update_user(user_id, user_in)
+    return await user_service.update_user(
+        user_id=user_id,
+        user_in=user_in,
+        current_user_id=current_user.id,
+    )
 
 
 # ==========================================
@@ -634,9 +640,10 @@ async def asignar_permisos_masivos_usuario(
     - ASIGNAR_ACCIONES_USUARIO
     """
     return await user_service.assign_user_permisos_masivos(
-        user_id=user_id,
-        data=data,
-    )
+    user_id=user_id,
+    data=data,
+    current_user_id=current_user.id,
+)
 
 
 # ==========================================
@@ -674,7 +681,11 @@ async def asignar_grupo_usuario(
     Permiso requerido:
     - ASIGNAR_GRUPOS_USUARIO
     """
-    return await user_service.assign_user_grupo(user_id, data)
+    return await user_service.assign_user_grupo(
+    user_id=user_id,
+    data=data,
+    current_user_id=current_user.id,
+)
 
 
 @router.post(
@@ -708,8 +719,11 @@ async def asignar_modulo_usuario(
     Permiso requerido:
     - ASIGNAR_MODULOS_USUARIO
     """
-    return await user_service.assign_user_modulo(user_id, data)
-
+    return await user_service.assign_user_modulo(
+    user_id=user_id,
+    data=data,
+    current_user_id=current_user.id,
+)
 
 @router.post(
     "/{user_id}/acciones",
@@ -741,7 +755,11 @@ async def asignar_accion_usuario(
     Permiso requerido:
     - ASIGNAR_ACCIONES_USUARIO
     """
-    return await user_service.assign_user_accion(user_id, data)
+    return await user_service.assign_user_accion(
+        user_id=user_id,
+        data=data,
+        current_user_id=current_user.id,
+    )
 
 
 # ==========================================
@@ -779,7 +797,11 @@ async def quitar_grupo_usuario(
     Permiso requerido:
     - QUITAR_GRUPOS_USUARIO
     """
-    return await user_service.remove_user_grupo(user_id, grupo_id)
+    return await user_service.remove_user_grupo(
+        user_id=user_id,
+        grupo_id=grupo_id,
+        current_user_id=current_user.id,
+    )
 
 
 @router.delete(
@@ -810,7 +832,11 @@ async def quitar_modulo_usuario(
     Permiso requerido:
     - QUITAR_MODULOS_USUARIO
     """
-    return await user_service.remove_user_modulo(user_id, modulo_id)
+    return await user_service.remove_user_modulo(
+    user_id=user_id,
+    modulo_id=modulo_id,
+    current_user_id=current_user.id,
+)
 
 
 @router.delete(
@@ -844,4 +870,8 @@ async def quitar_accion_usuario(
     Permiso requerido:
     - QUITAR_ACCIONES_USUARIO
     """
-    return await user_service.remove_user_accion(user_id, accion_id)
+    return await user_service.remove_user_accion(
+    user_id=user_id,
+    accion_id=accion_id,
+    current_user_id=current_user.id,
+)

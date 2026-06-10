@@ -44,13 +44,18 @@ class UserCreate(BaseModel):
     entidad_federativa_id: int = Field(
         ...,
         gt=0,
-        description="ID de la entidad federativa obtenido desde el catálogo externo"
+        description="ID de la entidad federativa obtenido desde el catálogo externo",
     )
-    
+
     numero_telefono: Optional[str] = Field(default=None, max_length=15)
 
     estatus_id: Optional[int] = None
     instancia_id: Optional[int] = None
+
+    grupo_id: UUID = Field(
+        ...,
+        description="ID del grupo/registro al que pertenecerá el usuario desde su creación",
+    )
 
 
 
@@ -98,7 +103,16 @@ class CrearPasswordPrimeraVez(BaseModel):
         return v
 
 
+class CambiarPasswordUsuario(BaseModel):
+    password_actual: str
+    password_nueva: str = Field(..., min_length=8)
 
+    @field_validator("password_nueva")
+    @classmethod
+    def validar_password_fuerte(cls, v: str) -> str:
+        if not re.match(PASSWORD_REGEX, v):
+            raise ValueError(PASSWORD_ERROR_MSG)
+        return v
 
 
 
@@ -128,6 +142,16 @@ class UserRead(BaseModel):
         from_attributes = True
 
 
+class GrupoUsuarioListRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+
 class UserListPublic(BaseModel):
     id: UUID
     nombre: str
@@ -140,6 +164,8 @@ class UserListPublic(BaseModel):
 
     estatus: Optional[EstatusUsuarioRead] = None
     instancia: Optional[InstanciaRead] = None
+
+    grupos: List[GrupoUsuarioListRead] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

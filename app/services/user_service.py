@@ -26,7 +26,7 @@ from app.models.user import (
 from app.schemas.user import (
     UserCreate,
     UserUpdate,
-    UserMeUpdate,
+    CambiarPasswordUsuario,
     CrearPasswordPrimeraVez,
     UsuarioGrupoCreate,
     UsuarioModuloCreate,
@@ -40,6 +40,17 @@ from app.services.notificacion_service import enviar_correo_cambio_estatus_usuar
 
 
 async def create_user(user_in: UserCreate, creado_por: UUID) -> User:
+    """
+    Crea un usuario dentro de un grupo/registro específico.
+
+    Reglas:
+    - El usuario se crea sin contraseña.
+    - El usuario debe pertenecer a un grupo desde su creación.
+    - SUPER_ADMIN puede crear usuarios en cualquier grupo.
+    - Un admin de registro solo puede crear usuarios dentro de su propio grupo.
+    - Al crear el usuario, se asigna automáticamente la relación usuario_grupos.
+    """
+
     if await User.exists(correo_electronico=user_in.correo_electronico):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -52,7 +63,25 @@ async def create_user(user_in: UserCreate, creado_por: UUID) -> User:
             detail="La CURP ya está registrada en el sistema.",
         )
 
+    grupo = await Grupo.get_or_none(id=user_in.grupo_id)
+
+    if not grupo:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grupo no encontrado.",
+        )
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=creado_por,
+        accion_nombre="CREAR_USUARIO",
+        grupo_id=user_in.grupo_id,
+    )
+
     user_data = user_in.model_dump()
+
+    # grupo_id no es columna directa de usuarios.
+    # Se usa solo para crear la relación en usuario_grupos.
+    grupo_id = user_data.pop("grupo_id")
 
     # El usuario se crea sin contraseña.
     # La contraseña se creará después mediante el enlace enviado por correo.
@@ -64,18 +93,34 @@ async def create_user(user_in: UserCreate, creado_por: UUID) -> User:
 
     user = await User.create(**user_data)
 
+    await UsuarioGrupo.get_or_create(
+        usuario_id=user.id,
+        grupo_id=grupo_id,
+    )
+
     await user.fetch_related("estatus", "instancia")
 
     return user
 
 
-async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
+
+
+async def update_user(
+    user_id: UUID,
+    user_in: UserUpdate,
+    current_user_id: UUID,
+) -> User:
     """
     Actualización administrativa de usuario.
 
     Permite corregir datos administrativos del usuario, pero NO permite
     modificar contraseña. La contraseña se maneja en flujos separados.
     """
+
+    await validar_usuario_objetivo_administrable(
+        current_user_id=current_user_id,
+        target_user_id=user_id,
+    )
 
     user = await User.get_or_none(id=user_id)
 
@@ -121,28 +166,19 @@ async def update_user(user_id: UUID, user_in: UserUpdate) -> User:
 
 
 
-
-async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
+async def cambiar_password_usuario(
+    user_id: UUID,
+    data: CambiarPasswordUsuario,
+) -> dict:
     """
-    Actualiza los datos básicos del usuario autenticado.
+    Permite que el usuario autenticado cambie su propia contraseña.
 
-    Permite modificar SOLO:
-    - nombre
-    - primer_apellido
-    - segundo_apellido
-    - correo_electronico
-    - numero_telefono
-
-    No permite modificar:
-    - contraseña
-    - CURP
-    - estatus
-    - instancia
-    - entidad_federativa_id
-    - permisos
-    - grupos
-    - módulos
-    - acciones
+    Reglas:
+    - Requiere que el usuario esté autenticado.
+    - Requiere contraseña actual correcta.
+    - La nueva contraseña debe cumplir política de seguridad.
+    - La nueva contraseña no puede ser igual a la actual.
+    - Al cambiarla, se incrementa token_version para invalidar sesiones activas.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -153,29 +189,40 @@ async def update_me(user_id: UUID, user_in: UserMeUpdate) -> User:
             detail="Usuario no encontrado.",
         )
 
-    update_data = user_in.model_dump(exclude_unset=True)
+    if not user.contrasena_hasheada:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta aún no tiene contraseña configurada. Usa el enlace de activación.",
+        )
 
-    nuevo_correo = update_data.get("correo_electronico")
-    if nuevo_correo:
-        correo_duplicado = await User.filter(
-            correo_electronico=nuevo_correo
-        ).exclude(id=user_id).exists()
+    if not verify_password(data.password_actual, user.contrasena_hasheada):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La contraseña actual es incorrecta.",
+        )
 
-        if correo_duplicado:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="El correo ya está registrado en otro usuario.",
-            )
+    if verify_password(data.password_nueva, user.contrasena_hasheada):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La nueva contraseña no puede ser igual a la contraseña actual.",
+        )
 
-    for field, value in update_data.items():
-        setattr(user, field, value)
+    user.contrasena_hasheada = get_password_hash(data.password_nueva)
+    user.intentos_login = 0
+    user.token_version += 1
 
-    await user.save()
-    await user.fetch_related("estatus", "instancia")
+    await user.save(
+        update_fields=[
+            "contrasena_hasheada",
+            "intentos_login",
+            "token_version",
+            "fecha_actualizacion",
+        ]
+    )
 
-    return user
-
-
+    return {
+        "message": "Contraseña actualizada correctamente. Por seguridad, vuelve a iniciar sesión.",
+    }
 
 
 
@@ -474,9 +521,99 @@ async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
     return user
 
 
-async def get_users() -> list[User]:
-    users = await User.all().prefetch_related("estatus", "instancia")
-    return users
+async def get_users(current_user_id: UUID) -> list[dict]:
+    """
+    Lista usuarios según el alcance administrativo del usuario autenticado.
+
+    Reglas:
+    - SUPER_ADMIN ve todos los usuarios de todos los registros.
+    - Admin de registro ve usuarios pertenecientes a los grupos donde tenga
+      ADMINISTRAR_USUARIOS.
+    - La respuesta incluye los grupos a los que pertenece cada usuario.
+    """
+
+    async def serializar_usuario_listado(user: User) -> dict:
+        grupos = []
+
+        for asignacion in user.grupos_asignados:
+            grupo = asignacion.grupo
+
+            grupos.append(
+                {
+                    "id": grupo.id,
+                    "nombre": grupo.nombre,
+                    "descripcion": grupo.descripcion,
+                }
+            )
+
+        grupos.sort(key=lambda item: item["nombre"])
+
+        return {
+            "id": user.id,
+            "nombre": user.nombre,
+            "primer_apellido": user.primer_apellido,
+            "segundo_apellido": user.segundo_apellido,
+            "correo_electronico": user.correo_electronico,
+            "curp": user.curp,
+            "entidad_federativa_id": user.entidad_federativa_id,
+            "numero_telefono": user.numero_telefono,
+            "estatus": user.estatus,
+            "instancia": user.instancia,
+            "grupos": grupos,
+        }
+
+    if await usuario_es_super_admin(current_user_id):
+        usuarios = await User.all().order_by(
+            "primer_apellido",
+            "segundo_apellido",
+            "nombre",
+        ).prefetch_related(
+            "estatus",
+            "instancia",
+            "grupos_asignados",
+            "grupos_asignados__grupo",
+        )
+
+        return [
+            await serializar_usuario_listado(user)
+            for user in usuarios
+        ]
+
+    grupos_administrables = await obtener_grupos_administrables_usuario(
+        current_user_id
+    )
+
+    if not grupos_administrables:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para consultar usuarios.",
+        )
+
+    usuarios_por_grupo_ids = await UsuarioGrupo.filter(
+        grupo_id__in=grupos_administrables,
+    ).values_list("usuario_id", flat=True)
+
+    usuarios = await User.filter(
+        id__in=usuarios_por_grupo_ids,
+    ).order_by(
+        "primer_apellido",
+        "segundo_apellido",
+        "nombre",
+    ).prefetch_related(
+        "estatus",
+        "instancia",
+        "grupos_asignados",
+        "grupos_asignados__grupo",
+    )
+
+    return [
+        await serializar_usuario_listado(user)
+        for user in usuarios
+    ]
+
+
+
+
 
 async def get_user_by_id(user_id: UUID) -> User:
     user = await User.get_or_none(id=user_id).prefetch_related(
@@ -496,13 +633,14 @@ async def get_user_by_id(user_id: UUID) -> User:
 async def assign_user_grupo(
     user_id: UUID,
     data: UsuarioGrupoCreate,
+    current_user_id: UUID,
 ) -> UsuarioGrupo:
     """
-    Asigna un grupo a un usuario.
+    Asigna un grupo a un usuario validando alcance administrativo.
 
-    Internamente:
-    grupo = Grupo
-    usuario_grupo = UsuarioGrupo
+    Reglas:
+    - SUPER_ADMIN puede asignar cualquier grupo.
+    - Admin de registro solo puede asignar grupos de su propio alcance.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -520,6 +658,12 @@ async def assign_user_grupo(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Grupo no encontrado.",
         )
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="ASIGNAR_GRUPOS_USUARIO",
+        grupo_id=data.grupo_id,
+    )
 
     try:
         asignacion = await UsuarioGrupo.create(
@@ -541,7 +685,17 @@ async def assign_user_grupo(
 async def assign_user_modulo(
     user_id: UUID,
     data: UsuarioModuloCreate,
+    current_user_id: UUID,
 ) -> UsuarioModulo:
+    """
+    Asigna un módulo a un usuario validando alcance administrativo.
+
+    Reglas:
+    - SUPER_ADMIN puede asignar cualquier módulo.
+    - Admin de registro solo puede asignar módulos de su registro.
+    - Al asignar módulo, también se asegura que el usuario tenga el grupo padre.
+    """
+
     user = await User.get_or_none(id=user_id)
 
     if not user:
@@ -550,13 +704,26 @@ async def assign_user_modulo(
             detail="Usuario no encontrado.",
         )
 
-    modulo = await Modulo.get_or_none(id=data.modulo_id)
+    modulo = await Modulo.get_or_none(id=data.modulo_id).prefetch_related(
+        "grupo"
+    )
 
     if not modulo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Módulo no encontrado.",
         )
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="ASIGNAR_MODULOS_USUARIO",
+        grupo_id=modulo.grupo_id,
+    )
+
+    await UsuarioGrupo.get_or_create(
+        usuario_id=user_id,
+        grupo_id=modulo.grupo_id,
+    )
 
     try:
         asignacion = await UsuarioModulo.create(
@@ -578,7 +745,17 @@ async def assign_user_modulo(
 async def assign_user_accion(
     user_id: UUID,
     data: UsuarioAccionCreate,
+    current_user_id: UUID,
 ) -> UsuarioAccion:
+    """
+    Asigna una acción a un usuario validando alcance administrativo.
+
+    Reglas:
+    - SUPER_ADMIN puede asignar cualquier acción.
+    - Admin de registro solo puede asignar acciones de su registro.
+    - Al asignar acción, también se asegura grupo padre y módulo padre.
+    """
+
     user = await User.get_or_none(id=user_id)
 
     if not user:
@@ -587,13 +764,39 @@ async def assign_user_accion(
             detail="Usuario no encontrado.",
         )
 
-    accion = await Accion.get_or_none(id=data.accion_id)
+    accion = await Accion.get_or_none(id=data.accion_id).prefetch_related(
+        "modulo",
+        "modulo__grupo",
+    )
 
     if not accion:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Acción no encontrada.",
         )
+    
+    if accion.nombre == "SUPER_ADMIN" and not await usuario_es_super_admin(current_user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el super usuario puede asignar permisos SUPER_ADMIN.",
+        )
+
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="ASIGNAR_ACCIONES_USUARIO",
+        grupo_id=accion.modulo.grupo_id,
+    )
+
+    await UsuarioGrupo.get_or_create(
+        usuario_id=user_id,
+        grupo_id=accion.modulo.grupo_id,
+    )
+
+    await UsuarioModulo.get_or_create(
+        usuario_id=user_id,
+        modulo_id=accion.modulo_id,
+    )
 
     try:
         asignacion = await UsuarioAccion.create(
@@ -610,10 +813,14 @@ async def assign_user_accion(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Este usuario ya tiene asignada esa acción.",
-        )   
+        )
 
 
-async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
+async def remove_user_grupo(
+    user_id: UUID,
+    grupo_id: UUID,
+    current_user_id: UUID,
+):
     """
     Quita a un usuario el acceso a un grupo.
 
@@ -642,6 +849,12 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Grupo no encontrado.",
         )
+    
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="QUITAR_GRUPOS_USUARIO",
+        grupo_id=grupo_id,
+    )
 
     asignacion = await UsuarioGrupo.get_or_none(
         usuario_id=user_id,
@@ -695,18 +908,18 @@ async def remove_user_grupo(user_id: UUID, grupo_id: UUID):
         "grupo_eliminado": True,
     }
 
-async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
+async def remove_user_modulo(
+    user_id: UUID,
+    modulo_id: UUID,
+    current_user_id: UUID,
+):
     """
     Quita a un usuario el acceso a un módulo.
 
     Cascada lógica:
     - elimina acciones asignadas que pertenezcan a ese módulo
     - elimina la relación usuario-módulo
-    - INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS
-
-    No elimina el grupo padre.
-    No elimina catálogos.
-    No elimina el usuario.
+    - incrementa token_version para cerrar sesiones activas
     """
 
     user = await User.get_or_none(id=user_id)
@@ -717,13 +930,19 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
             detail="Usuario no encontrado.",
         )
 
-    modulo = await Modulo.get_or_none(id=modulo_id)
+    modulo = await Modulo.get_or_none(id=modulo_id).prefetch_related("grupo")
 
     if not modulo:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Módulo no encontrado.",
         )
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="QUITAR_MODULOS_USUARIO",
+        grupo_id=modulo.grupo_id,
+    )
 
     asignacion = await UsuarioModulo.get_or_none(
         usuario_id=user_id,
@@ -736,24 +955,23 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
             detail="El usuario no tiene asignado este módulo.",
         )
 
-    # 1. Obtener acciones del módulo
     accion_ids = await Accion.filter(
         modulo_id=modulo_id,
     ).values_list("id", flat=True)
 
-    # 2. Eliminar acciones asignadas al usuario de ese módulo
     acciones_eliminadas = 0
+
     if accion_ids:
         acciones_eliminadas = await UsuarioAccion.filter(
             usuario_id=user_id,
             accion_id__in=accion_ids,
         ).delete()
 
-    # 3. Eliminar módulo asignado al usuario
     await asignacion.delete()
 
-    # 4. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
-    await User.filter(id=user_id).update(token_version=F("token_version") + 1)
+    await User.filter(id=user_id).update(
+        token_version=F("token_version") + 1
+    )
 
     return {
         "message": "Acceso al módulo removido correctamente.",
@@ -764,13 +982,17 @@ async def remove_user_modulo(user_id: UUID, modulo_id: UUID):
         "grupo_padre_eliminado": False,
     }
 
-async def remove_user_accion(user_id: UUID, accion_id: UUID):
+async def remove_user_accion(
+    user_id: UUID,
+    accion_id: UUID,
+    current_user_id: UUID,
+):
     """
     Quita a un usuario el acceso a una acción.
 
     No elimina la acción del catálogo.
     Solo elimina la relación en usuario_acciones.
-    INCREMENTA LA VERSIÓN DEL TOKEN PARA CERRAR SESIONES ACTIVAS.
+    Incrementa token_version para cerrar sesiones activas.
     """
 
     user = await User.get_or_none(id=user_id)
@@ -781,13 +1003,22 @@ async def remove_user_accion(user_id: UUID, accion_id: UUID):
             detail="Usuario no encontrado.",
         )
 
-    accion = await Accion.get_or_none(id=accion_id)
+    accion = await Accion.get_or_none(id=accion_id).prefetch_related(
+        "modulo",
+        "modulo__grupo",
+    )
 
     if not accion:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Acción no encontrada.",
         )
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="QUITAR_ACCIONES_USUARIO",
+        grupo_id=accion.modulo.grupo_id,
+    )
 
     asignacion = await UsuarioAccion.get_or_none(
         usuario_id=user_id,
@@ -800,11 +1031,11 @@ async def remove_user_accion(user_id: UUID, accion_id: UUID):
             detail="El usuario no tiene asignada esta acción.",
         )
 
-    # 1. Eliminar la asignación de la acción
     await asignacion.delete()
 
-    # 2. KILL SWITCH: Invalidamos los JWT activos para forzar la actualización de permisos
-    await User.filter(id=user_id).update(token_version=F("token_version") + 1)
+    await User.filter(id=user_id).update(
+        token_version=F("token_version") + 1
+    )
 
     return {
         "message": "Acceso a la acción removido correctamente.",
@@ -817,6 +1048,166 @@ async def usuario_tiene_accion(user_id: UUID, accion_nombre: str) -> bool:
         usuario_id=user_id,
         accion__nombre=accion_nombre,
     ).exists()
+
+
+
+
+async def usuario_es_super_admin(user_id: UUID) -> bool:
+    """
+    Indica si el usuario tiene el permiso SUPER_ADMIN.
+
+    Este permiso representa al usuario Dios / administrador global.
+    Si lo tiene, puede administrar cualquier grupo o sistema.
+    """
+
+    return await UsuarioAccion.filter(
+        usuario_id=user_id,
+        accion__nombre="SUPER_ADMIN",
+    ).exists()
+
+
+async def usuario_tiene_accion_en_grupo(
+    user_id: UUID,
+    accion_nombre: str,
+    grupo_id: UUID,
+) -> bool:
+    """
+    Valida si un usuario tiene una acción específica dentro de un grupo específico.
+
+    Ejemplo:
+    - CREAR_USUARIO dentro del grupo MP
+    - ASIGNAR_ACCIONES_USUARIO dentro del grupo MH
+    - ACTUALIZAR_USUARIO dentro del grupo VF
+
+    Esto evita que un admin de MP pueda administrar usuarios o permisos de MH.
+    """
+
+    return await UsuarioAccion.filter(
+        usuario_id=user_id,
+        accion__nombre=accion_nombre,
+        accion__modulo__grupo_id=grupo_id,
+    ).exists()
+
+
+async def validar_accion_en_grupo_o_super_admin(
+    user_id: UUID,
+    accion_nombre: str,
+    grupo_id: UUID,
+) -> None:
+    """
+    Valida que el usuario pueda ejecutar una acción dentro de un grupo.
+
+    Reglas:
+    - Si el usuario tiene SUPER_ADMIN, se permite.
+    - Si no tiene SUPER_ADMIN, debe tener la acción dentro del grupo indicado.
+    - Si no cumple, devuelve HTTP 403.
+    """
+
+    if await usuario_es_super_admin(user_id):
+        return
+
+    tiene_permiso = await usuario_tiene_accion_en_grupo(
+        user_id=user_id,
+        accion_nombre=accion_nombre,
+        grupo_id=grupo_id,
+    )
+
+    if not tiene_permiso:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para realizar esta acción dentro de este registro.",
+        )
+
+
+async def obtener_grupos_administrables_usuario(user_id: UUID) -> set[UUID]:
+    """
+    Devuelve los grupos/registros que el usuario puede administrar.
+
+    Si el usuario tiene SUPER_ADMIN:
+    - Devuelve todos los grupos.
+
+    Si no tiene SUPER_ADMIN:
+    - Devuelve únicamente los grupos donde tenga ADMINISTRAR_USUARIOS.
+    """
+
+    if await usuario_es_super_admin(user_id):
+        grupo_ids = await Grupo.all().values_list("id", flat=True)
+        return set(grupo_ids)
+
+    asignaciones = await UsuarioAccion.filter(
+        usuario_id=user_id,
+        accion__nombre="ADMINISTRAR_USUARIOS",
+    ).prefetch_related(
+        "accion",
+        "accion__modulo",
+        "accion__modulo__grupo",
+    )
+
+    grupos = set()
+
+    for asignacion in asignaciones:
+        grupos.add(asignacion.accion.modulo.grupo.id)
+
+    return grupos
+
+
+async def usuario_pertenece_a_grupo(
+    user_id: UUID,
+    grupo_id: UUID,
+) -> bool:
+    """
+    Valida si un usuario pertenece a un grupo/registro.
+
+    Sirve para saber si un admin puede ver o modificar a ese usuario
+    según el grupo que administra.
+    """
+
+    return await UsuarioGrupo.filter(
+        usuario_id=user_id,
+        grupo_id=grupo_id,
+    ).exists()
+
+
+
+async def validar_usuario_objetivo_administrable(
+    current_user_id: UUID,
+    target_user_id: UUID,
+) -> None:
+    """
+    Valida que el usuario autenticado pueda operar sobre el usuario objetivo.
+
+    Reglas:
+    - SUPER_ADMIN puede operar sobre cualquier usuario.
+    - Admin de registro solo puede operar sobre usuarios que pertenezcan
+      a grupos donde él tenga ADMINISTRAR_USUARIOS.
+    """
+
+    if await usuario_es_super_admin(current_user_id):
+        return
+
+    grupos_administrables = await obtener_grupos_administrables_usuario(
+        current_user_id
+    )
+
+    if not grupos_administrables:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes grupos administrables.",
+        )
+
+    pertenece_a_grupo_administrable = await UsuarioGrupo.filter(
+        usuario_id=target_user_id,
+        grupo_id__in=grupos_administrables,
+    ).exists()
+
+    if not pertenece_a_grupo_administrable:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permiso para modificar este usuario.",
+        )
+
+
+
 
 async def obtener_permisos_usuario(user_id: UUID) -> dict:
     """
@@ -941,37 +1332,58 @@ async def obtener_permisos_usuario(user_id: UUID) -> dict:
 # CATÁLOGO COMPLETO DE PERMISOS
 # ==========================================
 
-async def get_catalogo_permisos():
+async def get_catalogo_permisos(current_user_id: UUID):
     """
-    Devuelve todo el catálogo de permisos del sistema.
+    Devuelve el catálogo de permisos según el alcance administrativo.
 
-    Estructura que devuelve:
-    - /grupos 
-        - módulos de cada grupo
-            - acciones de cada módulo
-
-    Esto sirve principalmente para el frontend, para que pueda mostrar
-    un árbol de permisos y el usuario administrador pueda seleccionar
-    qué permisos asignar sin buscar IDs manualmente en la base de datos.
+    Reglas:
+    - SUPER_ADMIN ve todos los grupos.
+    - Admin de registro ve únicamente los grupos donde tiene ADMINISTRAR_USUARIOS.
     """
 
-    grupos = await Grupo.all().prefetch_related(
-        # Carga los módulos relacionados con cada grupo.
+    if await usuario_es_super_admin(current_user_id):
+        return await Grupo.all().prefetch_related(
+            "modulos",
+            "modulos__acciones",
+        )
+
+    grupos_administrables = await obtener_grupos_administrables_usuario(
+        current_user_id
+    )
+
+    if not grupos_administrables:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para consultar el catálogo de permisos.",
+        )
+
+    return await Grupo.filter(
+        id__in=grupos_administrables,
+    ).prefetch_related(
         "modulos",
-
-        # Carga las acciones relacionadas con cada módulo.
         "modulos__acciones",
     )
 
-    return grupos
 
 
 
-
-async def get_catalogo_permisos_por_grupo(grupo_id: UUID):
+async def get_catalogo_permisos_por_grupo(
+    grupo_id: UUID,
+    current_user_id: UUID,
+):
     """
-    Devuelve módulos y acciones de un grupo específico.
+    Devuelve módulos y acciones de un grupo específico, validando alcance.
+
+    Reglas:
+    - SUPER_ADMIN puede consultar cualquier grupo.
+    - Admin de registro solo puede consultar su propio grupo.
     """
+
+    await validar_accion_en_grupo_o_super_admin(
+        user_id=current_user_id,
+        accion_nombre="VER_USUARIOS",
+        grupo_id=grupo_id,
+    )
 
     grupo = await Grupo.get_or_none(
         id=grupo_id
@@ -996,36 +1408,21 @@ async def get_catalogo_permisos_por_grupo(grupo_id: UUID):
 # ==========================================
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ==========================================
-
 async def assign_user_permisos_masivos(
     user_id: UUID,
     data: UsuarioPermisosMasivosCreate,
+    current_user_id: UUID,
 ):
     """
     Asigna permisos a un usuario de forma masiva.
 
-    Puede asignar:
-    - un grupo completo
-    - uno o varios módulos
-    - una o varias acciones
-
-    Reglas importantes:
-    1. Si se asigna un módulo, también se asigna automáticamente
-       su grupo padre.
-    2. Si se asigna una acción, también se asigna automáticamente
-       su módulo padre y su grupo padre.
-    3. Si algo ya estaba asignado, no marca error; simplemente lo ignora.
-    4. Si se manda grupo_id, se valida que los módulos y acciones
-       realmente pertenezcan a ese grupo.
-
-    Esto evita que el frontend tenga que hacer muchas peticiones como:
-    - asignar grupo
-    - asignar módulo
-    - asignar acción
-    una por una.
+    Reglas:
+    - SUPER_ADMIN puede asignar permisos de cualquier grupo.
+    - Un admin de registro solo puede asignar permisos dentro de su grupo.
+    - Si se envía grupo_id, los módulos y acciones deben pertenecer a ese grupo.
+    - Si no se envía grupo_id, el backend detecta los grupos de módulos/acciones.
     """
 
-    # Primero validamos que el usuario exista.
     user = await User.get_or_none(id=user_id)
 
     if not user:
@@ -1034,14 +1431,10 @@ async def assign_user_permisos_masivos(
             detail="Usuario no encontrado.",
         )
 
-    # Contadores para informar cuántos permisos nuevos se asignaron.
-    # Si el permiso ya existía, no se cuenta como nuevo.
-    grupos_asignados = 0
-    modulos_asignados = 0
-    acciones_asignadas = 0
+    grupos_a_validar = set()
 
     # ==========================================
-    # 1. ASIGNAR GRUPO SI VIENE
+    # 1. VALIDAR GRUPO SI VIENE
     # ==========================================
 
     if data.grupo_id:
@@ -1053,17 +1446,13 @@ async def assign_user_permisos_masivos(
                 detail="Grupo no encontrado.",
             )
 
-        _, creado = await UsuarioGrupo.get_or_create(
-            usuario_id=user_id,
-            grupo_id=data.grupo_id,
-        )
-
-        if creado:
-            grupos_asignados += 1
+        grupos_a_validar.add(data.grupo_id)
 
     # ==========================================
-    # 2. ASIGNAR MÓDULOS
+    # 2. VALIDAR MÓDULOS Y DETECTAR SUS GRUPOS
     # ==========================================
+
+    modulos_validos = []
 
     for modulo_id in data.modulo_ids:
         modulo = await Modulo.get_or_none(id=modulo_id).prefetch_related(
@@ -1082,25 +1471,14 @@ async def assign_user_permisos_masivos(
                 detail=f"El módulo {modulo.nombre} no pertenece al grupo indicado.",
             )
 
-        _, grupo_creado = await UsuarioGrupo.get_or_create(
-            usuario_id=user_id,
-            grupo_id=modulo.grupo_id,
-        )
-
-        if grupo_creado:
-            grupos_asignados += 1
-
-        _, modulo_creado = await UsuarioModulo.get_or_create(
-            usuario_id=user_id,
-            modulo_id=modulo_id,
-        )
-
-        if modulo_creado:
-            modulos_asignados += 1
+        grupos_a_validar.add(modulo.grupo_id)
+        modulos_validos.append(modulo)
 
     # ==========================================
-    # 3. ASIGNAR ACCIONES
+    # 3. VALIDAR ACCIONES Y DETECTAR SUS GRUPOS
     # ==========================================
+
+    acciones_validas = []
 
     for accion_id in data.accion_ids:
         accion = await Accion.get_or_none(id=accion_id).prefetch_related(
@@ -1114,12 +1492,73 @@ async def assign_user_permisos_masivos(
                 detail=f"Acción no encontrada: {accion_id}",
             )
 
+        if accion.nombre == "SUPER_ADMIN" and not await usuario_es_super_admin(current_user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo el usuario Dios puede asignar permisos SUPER_ADMIN.",
+            )
+
         if data.grupo_id and accion.modulo.grupo_id != data.grupo_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"La acción {accion.nombre} no pertenece al grupo indicado.",
             )
 
+        grupos_a_validar.add(accion.modulo.grupo_id)
+        acciones_validas.append(accion)
+
+    if not grupos_a_validar:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debes enviar al menos un grupo, módulo o acción para asignar permisos.",
+        )
+
+    # ==========================================
+    # 4. VALIDAR ALCANCE DEL ADMIN ACTUAL
+    # ==========================================
+
+    for grupo_id in grupos_a_validar:
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="ASIGNAR_ACCIONES_USUARIO",
+            grupo_id=grupo_id,
+        )
+
+    # ==========================================
+    # 5. ASIGNAR PERMISOS
+    # ==========================================
+
+    grupos_asignados = 0
+    modulos_asignados = 0
+    acciones_asignadas = 0
+
+    if data.grupo_id:
+        _, creado = await UsuarioGrupo.get_or_create(
+            usuario_id=user_id,
+            grupo_id=data.grupo_id,
+        )
+
+        if creado:
+            grupos_asignados += 1
+
+    for modulo in modulos_validos:
+        _, grupo_creado = await UsuarioGrupo.get_or_create(
+            usuario_id=user_id,
+            grupo_id=modulo.grupo_id,
+        )
+
+        if grupo_creado:
+            grupos_asignados += 1
+
+        _, modulo_creado = await UsuarioModulo.get_or_create(
+            usuario_id=user_id,
+            modulo_id=modulo.id,
+        )
+
+        if modulo_creado:
+            modulos_asignados += 1
+
+    for accion in acciones_validas:
         _, grupo_creado = await UsuarioGrupo.get_or_create(
             usuario_id=user_id,
             grupo_id=accion.modulo.grupo_id,
@@ -1138,33 +1577,27 @@ async def assign_user_permisos_masivos(
 
         _, accion_creada = await UsuarioAccion.get_or_create(
             usuario_id=user_id,
-            accion_id=accion_id,
+            accion_id=accion.id,
         )
 
         if accion_creada:
             acciones_asignadas += 1
 
-    # Esta parte debe ir FUERA de los for.
     permisos_nuevos_asignados = (
         grupos_asignados > 0
         or modulos_asignados > 0
         or acciones_asignadas > 0
     )
 
-    # Si se asignó al menos un permiso nuevo, actualizamos la última sesión.
     if permisos_nuevos_asignados:
         await resetear_ultima_sesion(user)
 
     correo_bienvenida_enviado = False
 
-    # Si el usuario todavía no tiene contraseña, enviamos correo de bienvenida.
-    # Lo mandamos después de asignar permisos para que el correo ya incluya sistemas/módulos.
     if permisos_nuevos_asignados and not user.contrasena_hasheada:
         await enviar_correo_bienvenida_usuario(user)
         correo_bienvenida_enviado = True
 
-    # Consultamos los permisos finales del usuario para devolverlos
-    # ya actualizados en la respuesta.
     permisos = await obtener_permisos_usuario(user_id)
 
     return {

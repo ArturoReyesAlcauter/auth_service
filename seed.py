@@ -268,22 +268,23 @@ async def main():
     # =====================================================
 
     acciones_administracion_usuarios = [
-        "ADMINISTRAR_USUARIOS",
-        "CREAR_USUARIO",
-        "VER_USUARIOS",
-        "VER_USUARIO_DETALLE",
-        "ACTUALIZAR_USUARIO",
-        "DESACTIVAR_USUARIO",
-        "VER_GRUPOS_USUARIO",
-        "VER_MODULOS_USUARIO",
-        "VER_ACCIONES_USUARIO",
-        "ASIGNAR_GRUPOS_USUARIO",
-        "ASIGNAR_MODULOS_USUARIO",
-        "ASIGNAR_ACCIONES_USUARIO",
-        "QUITAR_GRUPOS_USUARIO",
-        "QUITAR_MODULOS_USUARIO",
-        "QUITAR_ACCIONES_USUARIO",
-    ]
+    "SUPER_ADMIN",
+    "ADMINISTRAR_USUARIOS",
+    "CREAR_USUARIO",
+    "VER_USUARIOS",
+    "VER_USUARIO_DETALLE",
+    "ACTUALIZAR_USUARIO",
+    "DESACTIVAR_USUARIO",
+    "VER_GRUPOS_USUARIO",
+    "VER_MODULOS_USUARIO",
+    "VER_ACCIONES_USUARIO",
+    "ASIGNAR_GRUPOS_USUARIO",
+    "ASIGNAR_MODULOS_USUARIO",
+    "ASIGNAR_ACCIONES_USUARIO",
+    "QUITAR_GRUPOS_USUARIO",
+    "QUITAR_MODULOS_USUARIO",
+    "QUITAR_ACCIONES_USUARIO",
+]
 
     for grupo in grupos:
         modulo_usuarios, _ = await Modulo.get_or_create(
