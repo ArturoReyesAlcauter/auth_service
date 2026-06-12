@@ -41,30 +41,67 @@ async def crear_usuario(
     current_user: User = Depends(requiere_accion("CREAR_USUARIO")),
 ):
     """
-    Crea un usuario administrativo dentro del servicio de autenticación.
+    Crea un usuario dentro del servicio de autenticación.
 
-    Este endpoint es usado por un administrador para registrar una cuenta nueva
-    dentro del sistema. El usuario se crea SIN contraseña, ya que la contraseña
-    será definida posteriormente por el propio usuario mediante un enlace de
-    activación enviado por correo electrónico.
+    Este endpoint permite registrar una cuenta nueva dentro de auth_service.
+    El usuario se crea SIN contraseña, ya que la contraseña será definida
+    posteriormente por el propio usuario mediante un enlace de activación
+    enviado por correo electrónico.
+
+    Reglas de alcance:
+    - SUPER_ADMIN / Dios puede crear usuarios en cualquier grupo o registro.
+    - Un administrador normal solo puede crear usuarios dentro de los grupos
+      donde tenga el permiso CREAR_USUARIO.
+    - Si un administrador intenta crear un usuario en un grupo que no administra,
+      el sistema debe responder 403.
+    - El grupo inicial del usuario se define mediante grupo_id.
+
+    Importancia de grupo_id:
+    - grupo_id indica a qué registro o sistema pertenecerá inicialmente el usuario.
+    - No representa todavía permisos funcionales completos.
+    - Sirve para que el usuario no quede huérfano sin registro.
+    - Sirve para validar que el administrador autenticado tenga permiso para
+      crear usuarios dentro de ese grupo.
+    - Sirve para que el usuario aparezca en el entorno correspondiente de los
+      administradores de ese registro.
 
     Flujo esperado:
-    1. El administrador crea el usuario con sus datos generales.
+    1. El administrador crea el usuario con sus datos generales y grupo_id.
     2. El usuario queda registrado sin contraseña.
-    3. Posteriormente, el administrador asigna permisos al usuario.
-    4. Al asignar permisos, el sistema envía el correo de bienvenida con el
-       enlace para crear la contraseña por primera vez.
+    3. El sistema asigna automáticamente la relación UsuarioGrupo con el grupo
+       recibido en grupo_id.
+    4. Posteriormente, el administrador asigna módulos y acciones mediante:
+       POST /users/{user_id}/permisos
+    5. Al asignar permisos, si el usuario todavía no tiene contraseña, el sistema
+       envía el correo de bienvenida/activación con el enlace para crear la
+       contraseña por primera vez.
 
     Campos importantes:
     - correo_electronico debe ser único.
     - curp debe ser única.
+    - entidad_federativa_id indica la entidad federativa del usuario.
     - estatus_id indica el estado inicial de la cuenta.
     - instancia_id indica la institución o instancia asociada.
+    - grupo_id indica el grupo/registro inicial del usuario.
 
     Restricciones:
     - No permite enviar contraseña.
-    - No asigna permisos automáticamente.
-    - No envía correo de activación hasta que el usuario tenga permisos asignados.
+    - No asigna módulos ni acciones automáticamente.
+    - No envía correo de activación al crear el usuario.
+    - El correo de activación se envía después, cuando se asignan permisos con
+      POST /users/{user_id}/permisos.
+    - No permite que un administrador normal cree usuarios en grupos fuera de
+      su alcance.
+
+    Ejemplo:
+    - Si el usuario autenticado es SUPER_ADMIN, puede crear usuarios para MP,
+      MH, VF, RNCAS o futuros registros.
+    - Si el usuario autenticado administra solo MP, solo puede crear usuarios
+      con grupo_id de MP.
+    - Si el usuario autenticado administra MP y MH, puede crear usuarios con
+      grupo_id de MP o MH.
+    - Si intenta crear un usuario en VF/RNCAS sin administrar esos grupos,
+      debe recibir 403.
 
     Permiso requerido:
     - CREAR_USUARIO
@@ -324,29 +361,71 @@ async def enviar_recuperacion_password_usuario(
 @router.get(
     "",
     response_model=list[UserListPublic],
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
 )
 async def listar_usuarios(
     current_user: User = Depends(requiere_accion("VER_USUARIOS")),
 ):
     """
-    Lista los usuarios registrados en el sistema.
+    Lista usuarios según el alcance del usuario autenticado.
 
-    Este endpoint devuelve una lista general de usuarios con información pública
-    administrativa, como nombre, apellidos, correo, CURP, estatus e instancia.
+    Este endpoint devuelve el listado de usuarios disponibles para el usuario
+    que inició sesión, respetando la jerarquía y los permisos por grupo/registro.
+
+    Reglas principales:
+    - SUPER_ADMIN / Dios puede visualizar todos los usuarios de todos los
+      registros existentes en el servicio de autenticación.
+    - Un administrador normal no ve todos los usuarios del sistema.
+    - Un administrador normal solo puede visualizar usuarios que pertenezcan
+      a los grupos/registros donde él tenga permiso administrativo.
+    - Si un administrador pertenece o administra más de un grupo, podrá ver
+      usuarios de todos esos grupos.
+    - Si un usuario pertenece a alguno de los grupos administrables por el
+      administrador autenticado, aparecerá en el listado.
+    - Si un usuario pertenece únicamente a grupos que el administrador no
+      administra, no aparecerá en la respuesta.
+
+    Ejemplos:
+    - Si el usuario autenticado es SUPER_ADMIN:
+      puede ver usuarios de MP, MH, VF, RNCAS y futuros registros.
+
+    - Si el usuario autenticado administra solo MP:
+      verá usuarios que pertenezcan a MP.
+      No verá usuarios exclusivos de MH, VF o RNCAS.
+
+    - Si el usuario autenticado administra MP y MH:
+      verá usuarios de MP, usuarios de MH y usuarios que pertenezcan a ambos.
+      No verá usuarios exclusivos de VF o RNCAS.
+
+    - Si un usuario objetivo pertenece a MP y RNCAS:
+      un administrador de MP sí podrá verlo porque existe cruce con MP.
+      un administrador de MH no podrá verlo si no administra MP ni RNCAS.
+
+    Información devuelta:
+    - Datos generales del usuario.
+    - Estatus.
+    - Instancia.
+    - Grupos a los que pertenece el usuario.
+
+    Profundidad de información:
+    - SUPER_ADMIN puede recibir información más completa de los permisos del
+      usuario, incluyendo grupos, módulos y acciones, si el service así lo
+      serializa.
+    - Un administrador normal solo recibe el listado de usuarios permitidos
+      junto con sus grupos correspondientes.
+    - Un administrador normal no debe recibir módulos ni acciones de los
+      usuarios listados.
+
+    Este endpoint no devuelve:
+    - Contraseñas.
+    - Tokens.
+    - Secretos de 2FA.
+    - Información de recuperación de contraseña.
 
     Uso principal:
-    Sirve para que el administrador consulte los usuarios registrados desde una
-    pantalla de administración.
-
-    No devuelve:
-    - contraseña
-    - tokens
-    - secretos de 2FA
-    - permisos detallados del usuario
-
-    Para consultar permisos de un usuario específico, usar:
-    GET /users/{user_id}
+    Sirve para que el panel de administración muestre únicamente los usuarios
+    que están dentro del entorno o alcance del administrador autenticado.
 
     Permiso requerido:
     - VER_USUARIOS
@@ -606,35 +685,103 @@ async def asignar_permisos_masivos_usuario(
     """
     Asigna permisos a un usuario de forma masiva.
 
-    Este endpoint permite asignar en una sola petición:
-    - un grupo
-    - varios módulos
-    - varias acciones
+    Este endpoint permite otorgar accesos a un usuario sin tener que llamar
+    individualmente a los endpoints de grupos, módulos y acciones.
 
-    Body esperado:
+    Permite asignar:
+    - Un grupo directo mediante grupo_id.
+    - Varios módulos mediante modulo_ids.
+    - Varias acciones mediante accion_ids.
+
+    Funcionamiento jerárquico:
+    - Si se envía grupo_id, se asigna ese grupo al usuario.
+    - Si se envían modulo_ids, el sistema asigna automáticamente el grupo padre
+      de cada módulo.
+    - Si se envían accion_ids, el sistema asigna automáticamente:
+        1. La acción.
+        2. El módulo padre de esa acción.
+        3. El grupo padre de ese módulo.
+
+    Esto significa que no es obligatorio enviar grupo_id si se están enviando
+    módulos o acciones, ya que el backend puede detectar sus grupos padre.
+
+    Ejemplo 1: asignar solo un grupo
     {
-      "grupo_id": "uuid-opcional-del-grupo",
-      "modulo_ids": ["uuid-modulo-1", "uuid-modulo-2"],
-      "accion_ids": ["uuid-accion-1", "uuid-accion-2"]
+      "grupo_id": "uuid-del-grupo",
+      "modulo_ids": [],
+      "accion_ids": []
     }
 
-    Reglas de asignación:
-    - Si se envía grupo_id, se asigna el grupo.
-    - Si se envían módulos, también se asigna automáticamente su grupo padre.
-    - Si se envían acciones, también se asignan automáticamente sus módulos padre
-      y sus grupos padre.
-    - Si un permiso ya estaba asignado, no se duplica y no se considera error.
-    - Si se envía grupo_id, los módulos y acciones deben pertenecer a ese grupo.
+    Ejemplo 2: asignar un grupo con varios módulos
+    {
+      "grupo_id": "uuid-del-grupo",
+      "modulo_ids": [
+        "uuid-modulo-1",
+        "uuid-modulo-2"
+      ],
+      "accion_ids": []
+    }
 
-    Comportamiento adicional:
-    - Si se asignó al menos un permiso nuevo, se actualiza la última sesión del usuario.
-    - Si el usuario todavía no tiene contraseña, se envía el correo de bienvenida
-      con el enlace para crear contraseña.
-    - Devuelve los permisos finales del usuario ya actualizados.
+    Ejemplo 3: asignar varios grupos indirectamente
+    Si se desea asignar más de un grupo en una sola petición, se debe enviar
+    grupo_id como null y mandar módulos o acciones pertenecientes a distintos
+    grupos.
 
-    Uso principal:
-    Sirve para registrar de forma rápida los accesos iniciales o adicionales de
-    un usuario sin tener que llamar varios endpoints individuales.
+    {
+      "grupo_id": null,
+      "modulo_ids": [
+        "uuid-modulo-del-grupo-mp",
+        "uuid-modulo-del-grupo-mh"
+      ],
+      "accion_ids": []
+    }
+
+    En ese caso el backend asignará automáticamente ambos grupos al usuario,
+    porque cada módulo pertenece a un grupo distinto.
+
+    Ejemplo 4: asignar acciones
+    {
+      "grupo_id": null,
+      "modulo_ids": [],
+      "accion_ids": [
+        "uuid-accion-1",
+        "uuid-accion-2",
+        "uuid-accion-3"
+      ]
+    }
+
+    En este caso el backend asignará las acciones indicadas y también asignará
+    automáticamente los módulos y grupos correspondientes.
+
+    Reglas de seguridad:
+    - SUPER_ADMIN / Dios puede asignar permisos de cualquier grupo.
+    - Un administrador de registro solo puede asignar permisos dentro de los
+      grupos donde tenga permiso administrativo.
+    - Si intenta asignar permisos de un grupo que no administra, el sistema debe
+      responder 403.
+    - La acción SUPER_ADMIN solo puede ser asignada por un usuario que ya sea
+      SUPER_ADMIN.
+    - Ningún administrador normal puede otorgar permisos de Dios.
+
+    Comportamiento con duplicados:
+    - Si el usuario ya tiene asignado un grupo, módulo o acción, no se duplica.
+    - El endpoint puede usarse para agregar nuevos permisos sin borrar los
+      permisos anteriores.
+
+    Envío de correo:
+    - Este endpoint también forma parte del flujo de activación de cuenta.
+    - Si el usuario todavía no tiene contraseña configurada, después de asignar
+      permisos el sistema envía el correo de bienvenida/activación.
+    - Ese correo incluye el enlace para que el usuario cree su contraseña por
+      primera vez.
+    - Si el usuario ya tiene contraseña, no se vuelve a enviar correo de
+      creación de contraseña.
+
+    Uso recomendado:
+    - Crear primero el usuario con POST /users.
+    - Después asignar sus permisos con POST /users/{user_id}/permisos.
+    - Al asignar permisos, se activa el flujo de correo para creación de
+      contraseña, si aplica.
 
     Permiso requerido:
     - ASIGNAR_ACCIONES_USUARIO

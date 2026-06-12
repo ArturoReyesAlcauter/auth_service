@@ -152,6 +152,39 @@ class GrupoUsuarioListRead(BaseModel):
 
 
 
+class AccionUsuarioListRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ModuloUsuarioListRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+    acciones: List[AccionUsuarioListRead] = Field(default_factory=list)
+
+    class Config:
+        from_attributes = True
+
+
+class GrupoUsuarioListRead(BaseModel):
+    id: UUID
+    nombre: str
+    descripcion: Optional[str] = None
+
+    # Solo se enviará para SUPER_ADMIN.
+    # Para admins normales irá como None y FastAPI lo ocultará.
+    modulos: Optional[List[ModuloUsuarioListRead]] = None
+
+    class Config:
+        from_attributes = True
+
+
+
 class UserListPublic(BaseModel):
     id: UUID
     nombre: str
@@ -351,26 +384,69 @@ class GrupoCatalogoRead(BaseModel):
 # ==========================================
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ==========================================
-# Este schema permite asignar a un usuario:
-# - un grupo
-# - varios módulos
-# - varias acciones
+# Este schema permite asignar permisos a un usuario en una sola petición.
 #
-# Nota:
-# Si se mandan acciones, el service también asignará automáticamente
-# el módulo padre y el grupo padre de esas acciones.
+# Puede asignar:
+# - Un grupo directo usando grupo_id.
+# - Varios módulos usando modulo_ids.
+# - Varias acciones usando accion_ids.
+#
+# Reglas importantes:
+# - Si se manda grupo_id, se asigna ese grupo directamente.
+# - Si se mandan módulos, el service asignará automáticamente
+#   el grupo padre de cada módulo.
+# - Si se mandan acciones, el service asignará automáticamente
+#   la acción, su módulo padre y el grupo padre de ese módulo.
+#
+# Por eso, para asignar permisos de varios grupos en una sola petición,
+# se debe mandar grupo_id=None y agregar en modulo_ids o accion_ids
+# elementos que pertenezcan a distintos grupos.
+#
+# Ejemplo:
+# {
+#   "grupo_id": null,
+#   "modulo_ids": [
+#       "uuid-modulo-del-grupo-mp",
+#       "uuid-modulo-del-grupo-mh"
+#   ],
+#   "accion_ids": []
+# }
+#
+# En ese caso, el backend asignará automáticamente:
+# - el módulo de MP
+# - el grupo MP
+# - el módulo de MH
+# - el grupo MH
+#
+# Este endpoint también forma parte del flujo de activación:
+# - Si el usuario todavía no tiene contraseña, al asignarle permisos
+#   se envía el correo de bienvenida/activación.
+# - Ese correo contiene el enlace para crear la contraseña por primera vez.
+# - Si el usuario ya tiene contraseña, no se vuelve a enviar ese correo.
 
 
 class UsuarioPermisosMasivosCreate(BaseModel):
-    # Grupo que se quiere asignar.
-    # Es opcional porque podrías asignar solo módulos o acciones,
-    # y el backend detectará automáticamente su grupo padre.
+    # Grupo que se quiere asignar directamente.
+    #
+    # Es opcional porque también se pueden asignar solo módulos o acciones.
+    # En ese caso, el backend detecta automáticamente los grupos padre.
+    #
+    # Para asignar permisos de varios grupos en una sola petición,
+    # usar grupo_id=None y mandar módulos/acciones de distintos grupos.
     grupo_id: Optional[UUID] = None
 
     # Lista de módulos que se quieren asignar al usuario.
+    #
     # Puede venir vacía.
+    # Si se mandan módulos, el backend también asignará automáticamente
+    # el grupo padre de cada módulo.
     modulo_ids: List[UUID] = []
 
     # Lista de acciones que se quieren asignar al usuario.
+    #
     # Puede venir vacía.
+    # Si se mandan acciones, el backend también asignará automáticamente:
+    # - la acción
+    # - el módulo padre
+    # - el grupo padre
     accion_ids: List[UUID] = []

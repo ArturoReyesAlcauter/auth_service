@@ -24,7 +24,8 @@ uv run python -c "from app.core.config import settings; print(settings.DATABASE_
 
 6. Aplicar migraciones pendientes
 Después de un git pull, normalmente debes ejecutar:
-uv run aerich upgrade
+
+uv run python -m aerich upgrade
 
 7. Ejecutar seed
 Después de tener la base con tablas, ejecuta:
@@ -62,3 +63,12 @@ uv run python -m uvicorn app.main:app --reload --port 8001
 Pero si hubo cambios en modelos o migraciones, sí ejecuta:
 
 uv run aerich upgrade
+
+
+
+
+____________________________Como borrar y recrear todas las tablas:
+uv run python reset_db.py
+uv run python -m aerich init-db
+uv run python seed.py
+uv run python -m uvicorn app.main:app --reload --port 8001

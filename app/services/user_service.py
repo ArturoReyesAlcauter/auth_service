@@ -526,27 +526,35 @@ async def get_users(current_user_id: UUID) -> list[dict]:
     Lista usuarios según el alcance administrativo del usuario autenticado.
 
     Reglas:
-    - SUPER_ADMIN ve todos los usuarios de todos los registros.
-    - Admin de registro ve usuarios pertenecientes a los grupos donde tenga
-      ADMINISTRAR_USUARIOS.
-    - La respuesta incluye los grupos a los que pertenece cada usuario.
+    - SUPER_ADMIN ve todos los usuarios con grupos, módulos y acciones.
+    - Admin de registro ve solo usuarios de sus grupos administrables.
+    - Admin normal solo ve grupos, no módulos ni acciones.
     """
 
-    async def serializar_usuario_listado(user: User) -> dict:
-        grupos = []
+    es_super_admin = await usuario_es_super_admin(current_user_id)
 
-        for asignacion in user.grupos_asignados:
-            grupo = asignacion.grupo
+    async def serializar_usuario_listado(
+        user: User,
+        incluir_detalle_permisos: bool,
+    ) -> dict:
+        if incluir_detalle_permisos:
+            permisos = await obtener_permisos_usuario(user.id)
+            grupos = permisos.get("grupos", [])
+        else:
+            grupos = []
 
-            grupos.append(
-                {
-                    "id": grupo.id,
-                    "nombre": grupo.nombre,
-                    "descripcion": grupo.descripcion,
-                }
-            )
+            for asignacion in user.grupos_asignados:
+                grupo = asignacion.grupo
 
-        grupos.sort(key=lambda item: item["nombre"])
+                grupos.append(
+                    {
+                        "id": grupo.id,
+                        "nombre": grupo.nombre,
+                        "descripcion": grupo.descripcion,
+                    }
+                )
+
+            grupos.sort(key=lambda item: item["nombre"])
 
         return {
             "id": user.id,
@@ -562,7 +570,7 @@ async def get_users(current_user_id: UUID) -> list[dict]:
             "grupos": grupos,
         }
 
-    if await usuario_es_super_admin(current_user_id):
+    if es_super_admin:
         usuarios = await User.all().order_by(
             "primer_apellido",
             "segundo_apellido",
@@ -575,7 +583,10 @@ async def get_users(current_user_id: UUID) -> list[dict]:
         )
 
         return [
-            await serializar_usuario_listado(user)
+            await serializar_usuario_listado(
+                user=user,
+                incluir_detalle_permisos=True,
+            )
             for user in usuarios
         ]
 
@@ -607,7 +618,10 @@ async def get_users(current_user_id: UUID) -> list[dict]:
     )
 
     return [
-        await serializar_usuario_listado(user)
+        await serializar_usuario_listado(
+            user=user,
+            incluir_detalle_permisos=False,
+        )
         for user in usuarios
     ]
 
