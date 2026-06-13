@@ -11,6 +11,7 @@ from tortoise.expressions import F
 from app.core.config import settings
 from app.core.security import verify_password, get_password_hash
 from app.models.user import User, EstatusUsuario, TokenUsuario
+from app.services import user_service
 from app.services.email_service import enviar_correo_html
 from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
 
@@ -295,7 +296,10 @@ async def solicitar_recuperacion_password(correo_electronico: str):
 
 
 
-async def enviar_recuperacion_password_por_admin(user_id: UUID):
+async def enviar_recuperacion_password_por_admin(
+    user_id: UUID,
+    current_user_id: UUID,
+):
     """
     Envía un correo de recuperación de contraseña solicitado por un administrador.
 
@@ -303,6 +307,9 @@ async def enviar_recuperacion_password_por_admin(user_id: UUID):
     El administrador valida la solicitud y dispara el envío del enlace.
 
     Reglas:
+    - SUPER_ADMIN / Dios puede enviar recuperación a cualquier usuario.
+    - Un administrador normal solo puede enviar recuperación a usuarios que
+      pertenezcan a sus grupos administrables.
     - El usuario debe existir.
     - El usuario ya debe tener una contraseña configurada.
     - Se elimina cualquier token anterior de recuperación.
@@ -320,6 +327,11 @@ async def enviar_recuperacion_password_por_admin(user_id: UUID):
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Usuario no encontrado.",
         )
+
+    await user_service.validar_usuario_objetivo_administrable(
+        current_user_id=current_user_id,
+        target_user_id=user_id,
+    )
 
     if not user.contrasena_hasheada:
         raise HTTPException(
@@ -362,7 +374,6 @@ async def enviar_recuperacion_password_por_admin(user_id: UUID):
         "user_id": str(user.id),
         "correo_electronico": user.correo_electronico,
     }
-
 
 
 

@@ -270,9 +270,6 @@ async def crear_password_primera_vez(
     )
 
 
-# ==========================================
-# Reenviar password 
-# ==========================================
 @router.post(
     "/{user_id}/reenviar-activacion",
     status_code=status.HTTP_200_OK,
@@ -284,29 +281,21 @@ async def reenviar_activacion_usuario(
     """
     Reenvía el correo de activación para que un usuario cree su contraseña.
 
-    Este endpoint es usado por un administrador cuando un usuario nuevo no alcanzó
-    a crear su contraseña, perdió el correo de activación o el enlace anterior expiró.
-
-    Solo aplica para usuarios que todavía NO tienen contraseña configurada.
-
-    Flujo:
-    1. El administrador solicita reenviar el correo de activación.
-    2. El sistema valida que el usuario exista.
-    3. El sistema valida que el usuario aún no tenga contraseña.
-    4. Se elimina cualquier token anterior de creación de contraseña.
-    5. Se genera un nuevo token.
-    6. Se envía un nuevo correo de activación.
-
-    Restricciones:
-    - Si el usuario ya tiene contraseña, no se reenvía activación.
-    - No modifica permisos.
-    - No cambia el estatus del usuario.
+    Reglas:
+    - SUPER_ADMIN / Dios puede reenviar activación a cualquier usuario.
+    - Un administrador normal solo puede reenviar activación a usuarios que
+      pertenezcan a los grupos donde él tenga permiso administrativo.
+    - El administrador debe tener ACTUALIZAR_USUARIO.
+    - Si intenta operar sobre un usuario fuera de su alcance, el sistema responde 403.
+    - Solo aplica para usuarios que todavía no tienen contraseña configurada.
 
     Permiso requerido:
     - ACTUALIZAR_USUARIO
     """
-    return await user_service.reenviar_correo_creacion_password(user_id)
-
+    return await user_service.reenviar_correo_creacion_password(
+        user_id=user_id,
+        current_user_id=current_user.id,
+    )
 
 
 
@@ -328,15 +317,23 @@ async def enviar_recuperacion_password_usuario(
     Este endpoint solo puede ejecutarlo un administrador o usuario autorizado.
     Se usa cuando el usuario notificó al administrador que olvidó su contraseña.
 
+    Reglas de alcance:
+    - SUPER_ADMIN / Dios puede enviar recuperación de contraseña a cualquier usuario.
+    - Un administrador normal solo puede enviar recuperación a usuarios que
+      pertenezcan a sus grupos administrables.
+    - El administrador debe tener ACTUALIZAR_USUARIO.
+    - Si intenta operar sobre un usuario fuera de su alcance, el sistema responde 403.
+
     Flujo:
     1. El usuario solicita apoyo al administrador.
     2. El administrador entra al sistema.
     3. El administrador ejecuta este endpoint sobre el usuario correspondiente.
-    4. El sistema genera un token temporal de recuperación.
-    5. Se envía un correo al usuario con un enlace.
-    6. El usuario debe usar el enlace antes de 24 horas.
-    7. El usuario captura una nueva contraseña.
-    8. El sistema actualiza la contraseña y elimina el token.
+    4. El sistema valida que el administrador pueda operar sobre ese usuario.
+    5. El sistema genera un token temporal de recuperación.
+    6. Se envía un correo al usuario con un enlace.
+    7. El usuario debe usar el enlace antes de 24 horas.
+    8. El usuario captura una nueva contraseña.
+    9. El sistema actualiza la contraseña y elimina el token.
 
     Reglas:
     - El usuario debe existir.
@@ -348,8 +345,10 @@ async def enviar_recuperacion_password_usuario(
     Permiso requerido:
     - ACTUALIZAR_USUARIO
     """
-    return await auth_service.enviar_recuperacion_password_por_admin(user_id)
-
+    return await auth_service.enviar_recuperacion_password_por_admin(
+        user_id=user_id,
+        current_user_id=current_user.id,
+    )
 
 
 
@@ -524,14 +523,13 @@ async def cambiar_estatus_usuario(
     """
     Cambia el estatus de un usuario usando el catálogo cat_estatus_usuarios.
 
-    Este endpoint permite activar, inactivar, bloquear o cambiar el estado de una
-    cuenta según los valores registrados en la tabla cat_estatus_usuarios.
-
-    Ejemplos comunes:
-    - 1 = Activo
-    - 2 = En Proceso
-    - 3 = Inactivo
-    - 4 = Intentos en exceso sesión
+    Reglas:
+    - SUPER_ADMIN / Dios puede cambiar el estatus de cualquier usuario.
+    - Un administrador normal solo puede cambiar el estatus de usuarios que
+      pertenezcan a sus grupos administrables.
+    - El administrador debe tener ACTUALIZAR_USUARIO.
+    - Si intenta cambiar el estatus de un usuario fuera de su alcance,
+      el sistema responde 403.
 
     Comportamiento:
     - Cambia el estatus del usuario.
@@ -539,16 +537,13 @@ async def cambiar_estatus_usuario(
     - Incrementa token_version para invalidar sesiones activas.
     - Envía correo al usuario notificando el cambio de estatus.
 
-    Uso principal:
-    Sirve para que un administrador pueda bloquear, reactivar o inactivar cuentas
-    desde el panel de administración.
-
     Permiso requerido:
     - ACTUALIZAR_USUARIO
     """
     return await user_service.cambiar_estatus_usuario(
         user_id=user_id,
         estatus_id=estatus_id,
+        current_user_id=current_user.id,
     )
 
 
@@ -623,29 +618,24 @@ async def obtener_usuario_por_id(
     """
     Consulta un usuario específico por su ID.
 
+    Reglas:
+    - SUPER_ADMIN / Dios puede consultar cualquier usuario.
+    - Un administrador normal solo puede consultar usuarios que pertenezcan
+      a sus grupos administrables.
+    - El administrador debe tener VER_USUARIO_DETALLE.
+    - Si intenta consultar un usuario fuera de su alcance, el sistema responde 403.
+
     Devuelve información detallada del usuario, incluyendo sus permisos asignados
     organizados por grupo, módulo y acción.
-
-    La respuesta incluye:
-    - datos generales
-    - estatus
-    - instancia
-    - configuración de 2FA
-    - intentos de login
-    - fechas de creación y actualización
-    - permisos asignados
-
-    Uso principal:
-    Sirve para mostrar el detalle de un usuario en una pantalla administrativa
-    y revisar exactamente qué accesos tiene.
-
-    Parámetros:
-    - user_id: UUID del usuario a consultar.
 
     Permiso requerido:
     - VER_USUARIO_DETALLE
     """
-    user = await user_service.get_user_by_id(user_id)
+
+    user = await user_service.get_user_by_id(
+        user_id=user_id,
+        current_user_id=current_user.id,
+    )
 
     permisos = await user_service.obtener_permisos_usuario(user.id)
 
@@ -787,10 +777,10 @@ async def asignar_permisos_masivos_usuario(
     - ASIGNAR_ACCIONES_USUARIO
     """
     return await user_service.assign_user_permisos_masivos(
-    user_id=user_id,
-    data=data,
-    current_user_id=current_user.id,
-)
+        user_id=user_id,
+        data=data,
+        current_user_id=current_user.id,
+    )
 
 
 # ==========================================
@@ -829,10 +819,10 @@ async def asignar_grupo_usuario(
     - ASIGNAR_GRUPOS_USUARIO
     """
     return await user_service.assign_user_grupo(
-    user_id=user_id,
-    data=data,
-    current_user_id=current_user.id,
-)
+        user_id=user_id,
+        data=data,
+        current_user_id=current_user.id,
+    )
 
 
 @router.post(

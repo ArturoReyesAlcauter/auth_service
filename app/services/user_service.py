@@ -412,13 +412,23 @@ async def crear_password_primera_vez(token: str, password: str):
 
 
 
-async def reenviar_correo_creacion_password(user_id: UUID):
+async def reenviar_correo_creacion_password(
+    user_id: UUID,
+    current_user_id: UUID,
+):
     """
     Reenvía el correo para crear contraseña por primera vez.
 
-    Solo aplica para usuarios que todavía no tienen contraseña configurada.
-    Al generar un nuevo token, se eliminan tokens anteriores del mismo tipo.
+    Reglas:
+    - SUPER_ADMIN puede reenviar activación a cualquier usuario.
+    - Admin normal solo puede reenviar activación a usuarios de sus grupos administrables.
+    - Solo aplica si el usuario todavía no tiene contraseña configurada.
     """
+
+    await validar_usuario_objetivo_administrable(
+        current_user_id=current_user_id,
+        target_user_id=user_id,
+    )
 
     user = await User.get_or_none(id=user_id).prefetch_related(
         "estatus",
@@ -451,15 +461,31 @@ async def reenviar_correo_creacion_password(user_id: UUID):
 
 
 
-async def cambiar_estatus_usuario(user_id: UUID, estatus_id: int) -> User:
+async def cambiar_estatus_usuario(
+    user_id: UUID,
+    estatus_id: int,
+    current_user_id: UUID,
+) -> User:
     """
     Cambia el estatus de un usuario usando cat_estatus_usuarios.
 
+    Reglas de alcance:
+    - SUPER_ADMIN / Dios puede cambiar el estatus de cualquier usuario.
+    - Un administrador normal solo puede cambiar el estatus de usuarios que
+      pertenezcan a sus grupos administrables.
+    - Si intenta cambiar el estatus de un usuario fuera de su alcance,
+      se responde 403.
+
     También:
-    - reinicia intentos_login si el nuevo estatus es Activo
-    - incrementa token_version para invalidar sesiones activas
-    - envía correo notificando el cambio de estatus
+    - Reinicia intentos_login si el nuevo estatus es Activo.
+    - Incrementa token_version para invalidar sesiones activas.
+    - Envía correo notificando el cambio de estatus.
     """
+
+    await validar_usuario_objetivo_administrable(
+        current_user_id=current_user_id,
+        target_user_id=user_id,
+    )
 
     user = await User.get_or_none(id=user_id).prefetch_related(
         "estatus",
@@ -629,7 +655,20 @@ async def get_users(current_user_id: UUID) -> list[dict]:
 
 
 
-async def get_user_by_id(user_id: UUID) -> User:
+async def get_user_by_id(
+    user_id: UUID,
+    current_user_id: UUID,
+) -> User:
+    """
+    Obtiene un usuario por ID validando alcance administrativo.
+
+    Reglas:
+    - SUPER_ADMIN / Dios puede consultar cualquier usuario.
+    - Un administrador normal solo puede consultar usuarios que pertenezcan
+      a sus grupos administrables.
+    - Si el usuario objetivo está fuera de su alcance, responde 403.
+    """
+
     user = await User.get_or_none(id=user_id).prefetch_related(
         "estatus",
         "instancia",
@@ -641,8 +680,16 @@ async def get_user_by_id(user_id: UUID) -> User:
             detail="Usuario no encontrado.",
         )
 
+    await validar_usuario_objetivo_administrable(
+        current_user_id=current_user_id,
+        target_user_id=user_id,
+    )
+
     return user
 
+    
+
+    
 
 async def assign_user_grupo(
     user_id: UUID,
@@ -1183,6 +1230,8 @@ async def usuario_pertenece_a_grupo(
 
 
 
+
+
 async def validar_usuario_objetivo_administrable(
     current_user_id: UUID,
     target_user_id: UUID,
@@ -1191,14 +1240,18 @@ async def validar_usuario_objetivo_administrable(
     Valida que el usuario autenticado pueda operar sobre el usuario objetivo.
 
     Reglas:
-    - SUPER_ADMIN puede operar sobre cualquier usuario.
-    - Admin de registro solo puede operar sobre usuarios que pertenezcan
-      a grupos donde él tenga ADMINISTRAR_USUARIOS.
+    - SUPER_ADMIN / Dios puede operar sobre cualquier usuario.
+    - Un administrador normal solo puede operar sobre usuarios que pertenezcan
+      a los grupos donde él tiene ADMINISTRAR_USUARIOS.
+    - Si el usuario objetivo no pertenece a ningún grupo administrable por el
+      administrador autenticado, se responde 403.
     """
 
+    # Si el usuario autenticado es SUPER_ADMIN, puede operar sobre cualquiera.
     if await usuario_es_super_admin(current_user_id):
         return
 
+    # Obtenemos los grupos que administra el usuario autenticado.
     grupos_administrables = await obtener_grupos_administrables_usuario(
         current_user_id
     )
@@ -1209,6 +1262,8 @@ async def validar_usuario_objetivo_administrable(
             detail="No tienes grupos administrables.",
         )
 
+    # Validamos si el usuario objetivo pertenece a por lo menos
+    # uno de los grupos administrables del usuario autenticado.
     pertenece_a_grupo_administrable = await UsuarioGrupo.filter(
         usuario_id=target_user_id,
         grupo_id__in=grupos_administrables,
@@ -1217,8 +1272,11 @@ async def validar_usuario_objetivo_administrable(
     if not pertenece_a_grupo_administrable:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tienes permiso para modificar este usuario.",
+            detail="No tienes permiso para operar sobre este usuario.",
         )
+
+
+
 
 
 
