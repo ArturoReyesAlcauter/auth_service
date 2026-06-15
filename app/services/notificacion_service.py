@@ -1,47 +1,16 @@
-from pathlib import Path
-
 from app.core.config import settings
-from app.models.user import User, EstatusUsuario
-from app.services.email_service import enviar_correo_html
+from app.services.email_service import (
+    enviar_correo_html,
+    render_template_email,
+)
 
 
-def render_template_email(nombre_template: str, contexto: dict) -> str:
+def obtener_nombre_completo_usuario(user) -> str:
     """
-    Carga una plantilla HTML desde app/templates y reemplaza variables simples.
-    """
-
-    ruta_template = (
-        Path(__file__).resolve().parent.parent
-        / "templates"
-        / nombre_template
-    )
-
-    html = ruta_template.read_text(encoding="utf-8")
-
-    for clave, valor in contexto.items():
-        html = html.replace(f"{{{{ {clave} }}}}", str(valor))
-
-    return html
-
-
-async def enviar_correo_cambio_estatus_usuario(
-    user: User,
-    estatus_anterior: EstatusUsuario | None,
-    estatus_nuevo: EstatusUsuario,
-    motivo: str | None = None,
-) -> None:
-    """
-    Envía correo al usuario cuando su estatus cambia.
-
-    Sirve para:
-    - activación
-    - inactivación
-    - bloqueo por intentos
-    - reactivación
-    - cualquier estatus de cat_estatus_usuarios
+    Construye el nombre completo del usuario.
     """
 
-    nombre_completo = " ".join(
+    return " ".join(
         parte
         for parte in [
             user.nombre,
@@ -51,29 +20,108 @@ async def enviar_correo_cambio_estatus_usuario(
         if parte
     )
 
-    estatus_anterior_nombre = (
-        estatus_anterior.nombre
-        if estatus_anterior
-        else "Sin estatus anterior"
+
+async def enviar_correo_activacion_usuario(
+    user,
+    token: str,
+    sistemas_html: str,
+) -> None:
+    """
+    Envía correo de activación para que el usuario cree su contraseña
+    por primera vez.
+
+    Lo usan:
+    - POST /users/{user_id}/permisos
+    - POST /users/{user_id}/reenviar-activacion
+    """
+
+    nombre_completo = obtener_nombre_completo_usuario(user)
+
+    link_activacion = (
+        f"{settings.FRONTEND_URL}/crear-password?token={token}"
     )
 
-    motivo_texto = motivo or "Actualización de estatus de cuenta."
-
     html = render_template_email(
-        "email_cambio_estatus.html",
+        "email_bienvenida.html",
         {
             "nombre_completo": nombre_completo,
-            "correo_electronico": user.correo_electronico,
             "curp": user.curp,
-            "estatus_anterior": estatus_anterior_nombre,
-            "estatus_nuevo": estatus_nuevo.nombre,
-            "motivo": motivo_texto,
-            "frontend_url": settings.FRONTEND_URL,
+            "correo_electronico": user.correo_electronico,
+            "link_activacion": link_activacion,
+            "link_creacion_password": link_activacion,
+            "link_crear_password": link_activacion,
+            "sistemas_html": sistemas_html,
         },
     )
 
     enviar_correo_html(
         destinatario=user.correo_electronico,
-        asunto=f"Actualización de estatus de cuenta - {estatus_nuevo.nombre}",
+        asunto="Bienvenida/o - Activación de cuenta institucional",
+        html=html,
+    )
+
+
+async def enviar_correo_recuperacion_password(user, token: str) -> None:
+    """
+    Envía correo para restablecer contraseña.
+
+    Lo usa:
+    - POST /users/{user_id}/enviar-recuperacion-password
+    """
+
+    nombre_completo = obtener_nombre_completo_usuario(user)
+
+    link_recuperacion = (
+        f"{settings.FRONTEND_URL}/restablecer-password?token={token}"
+    )
+
+    html = render_template_email(
+        "email_recuperacion_password.html",
+        {
+            "nombre_completo": nombre_completo,
+            "link_recuperacion": link_recuperacion,
+            "link_restablecer_password": link_recuperacion,
+        },
+    )
+
+    enviar_correo_html(
+        destinatario=user.correo_electronico,
+        asunto="Restablecimiento de contraseña",
+        html=html,
+    )
+
+
+async def enviar_correo_cambio_estatus_usuario(
+    user,
+    estatus_anterior,
+    estatus_nuevo,
+    motivo: str,
+) -> None:
+    """
+    Envía correo cuando cambia el estatus de la cuenta.
+
+    Lo usa:
+    - PATCH /users/{user_id}/estatus/{estatus_id}
+    """
+
+    nombre_completo = obtener_nombre_completo_usuario(user)
+
+    html = render_template_email(
+        "email_cambio_estatus.html",
+        {
+            "nombre_completo": nombre_completo,
+            "estatus_anterior": (
+                estatus_anterior.nombre
+                if estatus_anterior
+                else "Sin estatus previo"
+            ),
+            "estatus_nuevo": estatus_nuevo.nombre,
+            "motivo": motivo,
+        },
+    )
+
+    enviar_correo_html(
+        destinatario=user.correo_electronico,
+        asunto="Actualización de estatus de cuenta",
         html=html,
     )

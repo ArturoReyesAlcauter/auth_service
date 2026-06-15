@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pathlib import Path
+
 from secrets import token_urlsafe
 from datetime import datetime, timedelta, timezone
 
@@ -9,7 +9,7 @@ from tortoise.exceptions import IntegrityError
 from tortoise.expressions import F
 
 from app.core.security import get_password_hash, verify_password
-from app.core.config import settings
+
 
 from app.models.user import (
     User,
@@ -27,7 +27,6 @@ from app.schemas.user import (
     UserCreate,
     UserUpdate,
     CambiarPasswordUsuario,
-    CrearPasswordPrimeraVez,
     UsuarioGrupoCreate,
     UsuarioModuloCreate,
     UsuarioAccionCreate,
@@ -35,8 +34,11 @@ from app.schemas.user import (
 )
 
 from app.services.session_service import resetear_ultima_sesion
-from app.services.email_service import enviar_correo_html
-from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
+
+from app.services.notificacion_service import (
+    enviar_correo_activacion_usuario,
+    enviar_correo_cambio_estatus_usuario,
+)
 
 
 async def create_user(user_in: UserCreate, creado_por: UUID) -> User:
@@ -227,32 +229,6 @@ async def cambiar_password_usuario(
 
 
 
-def render_template_email(nombre_template: str, contexto: dict) -> str:
-    """
-    Carga una plantilla HTML desde app/templates y reemplaza variables simples.
-
-    Ejemplo:
-    {{ nombre_completo }}
-    {{ link_recuperacion }}
-    """
-
-    ruta_template = (
-        Path(__file__).resolve().parent.parent
-        / "templates"
-        / nombre_template
-    )
-
-    html = ruta_template.read_text(encoding="utf-8")
-
-    for clave, valor in contexto.items():
-        html = html.replace(f"{{{{ {clave} }}}}", str(valor))
-
-    return html
-
-
-
-
-
 async def generar_token_creacion_password(user: User) -> str:
     """
     Genera un token para que el usuario cree su contraseña por primera vez.
@@ -304,51 +280,7 @@ async def obtener_sistemas_usuario_para_correo(user_id: UUID) -> str:
     return html
 
 
-async def enviar_correo_bienvenida_usuario(user: User) -> None:
-    """
-    Envía el correo de bienvenida con el enlace para crear contraseña.
 
-    Este correo debe enviarse después de que el administrador ya haya
-    asignado permisos al usuario.
-    """
-
-    if user.contrasena_hasheada:
-        return
-
-    token = await generar_token_creacion_password(user)
-
-    link_crear_password = (
-        f"{settings.FRONTEND_URL}/crear-password?token={token}"
-    )
-
-    sistemas_html = await obtener_sistemas_usuario_para_correo(user.id)
-
-    nombre_completo = " ".join(
-        parte
-        for parte in [
-            user.nombre,
-            user.primer_apellido,
-            user.segundo_apellido,
-        ]
-        if parte
-    )
-
-    html = render_template_email(
-        "email_bienvenida.html",
-        {
-            "nombre_completo": nombre_completo,
-            "curp": user.curp,
-            "correo_electronico": user.correo_electronico,
-            "link_crear_password": link_crear_password,
-            "sistemas_html": sistemas_html,
-        },
-    )
-
-    enviar_correo_html(
-        destinatario=user.correo_electronico,
-        asunto="Bienvenida/o - Activación de cuenta institucional",
-        html=html,
-    )
 
 
 
@@ -447,7 +379,15 @@ async def reenviar_correo_creacion_password(
             detail="El usuario ya tiene una contraseña configurada.",
         )
 
-    await enviar_correo_bienvenida_usuario(user)
+    token = await generar_token_creacion_password(user)
+
+    sistemas_html = await obtener_sistemas_usuario_para_correo(user.id)
+
+    await enviar_correo_activacion_usuario(
+        user=user,
+        token=token,
+        sistemas_html=sistemas_html,
+    )
 
     return {
         "message": "Correo de activación reenviado correctamente.",
@@ -1667,7 +1607,16 @@ async def assign_user_permisos_masivos(
     correo_bienvenida_enviado = False
 
     if permisos_nuevos_asignados and not user.contrasena_hasheada:
-        await enviar_correo_bienvenida_usuario(user)
+        token = await generar_token_creacion_password(user)
+
+        sistemas_html = await obtener_sistemas_usuario_para_correo(user.id)
+
+        await enviar_correo_activacion_usuario(
+            user=user,
+            token=token,
+            sistemas_html=sistemas_html,
+        )
+
         correo_bienvenida_enviado = True
 
     permisos = await obtener_permisos_usuario(user_id)

@@ -1,6 +1,5 @@
 import pyotp
 
-from pathlib import Path
 from secrets import token_urlsafe
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
@@ -8,12 +7,13 @@ from uuid import UUID
 from fastapi import HTTPException, status
 from tortoise.expressions import F
 
-from app.core.config import settings
 from app.core.security import verify_password, get_password_hash
 from app.models.user import User, EstatusUsuario, TokenUsuario
 from app.services import user_service
-from app.services.email_service import enviar_correo_html
-from app.services.notificacion_service import enviar_correo_cambio_estatus_usuario
+from app.services.notificacion_service import (
+    enviar_correo_cambio_estatus_usuario,
+    enviar_correo_recuperacion_password,
+)
 
 
 MAX_INTENTOS_LOGIN = 5
@@ -189,27 +189,6 @@ async def revoke_refresh_token(token: str):
     """Invalida un refresh token específico (ej. para Logout)."""
     await TokenUsuario.filter(token=token, tipo="REFRESH_TOKEN").delete()
     
-def render_template_email(nombre_template: str, contexto: dict) -> str:
-    """
-    Carga una plantilla HTML desde app/templates y reemplaza variables simples.
-
-    Ejemplo:
-    {{ nombre_completo }}
-    {{ link_recuperacion }}
-    """
-
-    ruta_template = (
-        Path(__file__).resolve().parent.parent
-        / "templates"
-        / nombre_template
-    )
-
-    html = ruta_template.read_text(encoding="utf-8")
-
-    for clave, valor in contexto.items():
-        html = html.replace(f"{{{{ {clave} }}}}", str(valor))
-
-    return html
 
 
 async def generar_token_recuperacion_password(user: User) -> str:
@@ -263,32 +242,9 @@ async def solicitar_recuperacion_password(correo_electronico: str):
 
     token = await generar_token_recuperacion_password(user)
 
-    link_recuperacion = (
-        f"{settings.FRONTEND_URL}/restablecer-password?token={token}"
-    )
-
-    nombre_completo = " ".join(
-        parte
-        for parte in [
-            user.nombre,
-            user.primer_apellido,
-            user.segundo_apellido,
-        ]
-        if parte
-    )
-
-    html = render_template_email(
-        "email_recuperacion_password.html",
-        {
-            "nombre_completo": nombre_completo,
-            "link_recuperacion": link_recuperacion,
-        },
-    )
-
-    enviar_correo_html(
-        destinatario=user.correo_electronico,
-        asunto="Restablecimiento de contraseña",
-        html=html,
+    await enviar_correo_recuperacion_password(
+        user=user,
+        token=token,
     )
 
     return respuesta_generica
@@ -303,18 +259,12 @@ async def enviar_recuperacion_password_por_admin(
     """
     Envía un correo de recuperación de contraseña solicitado por un administrador.
 
-    Este flujo se usa cuando el usuario no puede solicitar libremente la recuperación.
-    El administrador valida la solicitud y dispara el envío del enlace.
-
     Reglas:
     - SUPER_ADMIN / Dios puede enviar recuperación a cualquier usuario.
     - Un administrador normal solo puede enviar recuperación a usuarios que
       pertenezcan a sus grupos administrables.
     - El usuario debe existir.
     - El usuario ya debe tener una contraseña configurada.
-    - Se elimina cualquier token anterior de recuperación.
-    - Se genera un nuevo token con vigencia de 24 horas.
-    - Se envía correo con el enlace para restablecer contraseña.
     """
 
     user = await User.get_or_none(id=user_id).prefetch_related(
@@ -341,32 +291,9 @@ async def enviar_recuperacion_password_por_admin(
 
     token = await generar_token_recuperacion_password(user)
 
-    link_recuperacion = (
-        f"{settings.FRONTEND_URL}/restablecer-password?token={token}"
-    )
-
-    nombre_completo = " ".join(
-        parte
-        for parte in [
-            user.nombre,
-            user.primer_apellido,
-            user.segundo_apellido,
-        ]
-        if parte
-    )
-
-    html = render_template_email(
-        "email_recuperacion_password.html",
-        {
-            "nombre_completo": nombre_completo,
-            "link_recuperacion": link_recuperacion,
-        },
-    )
-
-    enviar_correo_html(
-        destinatario=user.correo_electronico,
-        asunto="Restablecimiento de contraseña",
-        html=html,
+    await enviar_correo_recuperacion_password(
+        user=user,
+        token=token,
     )
 
     return {
@@ -374,8 +301,6 @@ async def enviar_recuperacion_password_por_admin(
         "user_id": str(user.id),
         "correo_electronico": user.correo_electronico,
     }
-
-
 
 
 
