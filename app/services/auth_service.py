@@ -9,6 +9,7 @@ from tortoise.expressions import F
 
 from app.core.security import verify_password, get_password_hash
 from app.models.user import User, EstatusUsuario, TokenUsuario
+from app.core.config import settings
 from app.services import user_service
 from app.services.notificacion_service import (
     enviar_correo_cambio_estatus_usuario,
@@ -142,17 +143,12 @@ def get_provisioning_uri(secret: str, account_name: str) -> str:
     )
 
 
-def verify_totp_code(secret: str | None, code: str) -> bool:
+def verify_totp_code(secret: str | None, code: str, valid_window: int = 2) -> bool:
     """
     Verifica el código de 6 dígitos generado por Google Authenticator.
 
-    valid_window=1 permite aceptar:
-    - el código del bloque anterior
-    - el código actual
-    - el código del siguiente bloque
-
-    Como TOTP normalmente cambia cada 30 segundos, esto da tolerancia
-    aproximada de +/- 30 segundos.
+    valid_window=2 permite aceptar una tolerancia aproximada de +/- 60 segundos,
+    porque Google Authenticator normalmente cambia el código cada 30 segundos.
     """
     if not secret:
         return False
@@ -160,16 +156,19 @@ def verify_totp_code(secret: str | None, code: str) -> bool:
     if not code:
         return False
 
-    clean_code = code.strip().replace(" ", "")
+    clean_code = str(code).strip().replace(" ", "")
 
     if not clean_code.isdigit():
+        return False
+
+    if len(clean_code) != 6:
         return False
 
     totp = pyotp.TOTP(secret)
 
     return totp.verify(
         clean_code,
-        valid_window=1,
+        valid_window=valid_window,
     )
 
 # Alias opcional por si en otro archivo ya estabas usando verify_totp
@@ -190,6 +189,110 @@ async def revoke_refresh_token(token: str):
     await TokenUsuario.filter(token=token, tipo="REFRESH_TOKEN").delete()
     
 
+
+
+
+def obtener_redirect_urls_permitidas() -> set[str]:
+    return {
+        url.strip().rstrip("/")
+        for url in settings.ALLOWED_REDIRECT_URLS.split(",")
+        if url.strip()
+    }
+
+
+def validar_redirect_url_permitida(redirect_url: str) -> str:
+    clean_url = redirect_url.strip().rstrip("/")
+    urls_permitidas = obtener_redirect_urls_permitidas()
+
+    if clean_url not in urls_permitidas:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "REDIRECT_URL_NOT_ALLOWED",
+                "detail": "La URL de redirección no está permitida.",
+            },
+        )
+
+    return clean_url
+
+
+async def generar_redirect_code(user: User, redirect_url: str) -> dict:
+    """
+    Genera un código temporal de un solo uso para transferir sesión
+    desde Login Universal hacia un módulo externo autorizado.
+    """
+    validar_redirect_url_permitida(redirect_url)
+
+    await TokenUsuario.filter(
+        usuario_id=user.id,
+        tipo="REDIRECT_CODE",
+    ).delete()
+
+    code = token_urlsafe(32)
+    expires_in = settings.REDIRECT_CODE_EXPIRE_SECONDS
+    fecha_expiracion = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+    await TokenUsuario.create(
+        usuario_id=user.id,
+        token=code,
+        tipo="REDIRECT_CODE",
+        fecha_expiracion=fecha_expiracion,
+    )
+
+    return {
+        "code": code,
+        "expires_in": expires_in,
+    }
+
+
+async def consumir_redirect_code(code: str) -> User:
+    """
+    Consume un código temporal de redirección.
+
+    El código se elimina al primer uso, aunque después falle una validación,
+    para evitar reutilización.
+    """
+    token_db = await TokenUsuario.get_or_none(
+        token=code,
+        tipo="REDIRECT_CODE",
+    ).prefetch_related("usuario")
+
+    if not token_db:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REDIRECT_CODE_INVALID",
+                "detail": "Código temporal inválido o ya utilizado.",
+            },
+        )
+
+    user = token_db.usuario
+    ahora = datetime.now(timezone.utc)
+
+    # Invalidar el código al intercambiarlo, incluso si ya expiró.
+    await token_db.delete()
+
+    if token_db.fecha_expiracion and token_db.fecha_expiracion < ahora:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REDIRECT_CODE_EXPIRED",
+                "detail": "El código temporal expiró.",
+            },
+        )
+
+    await user.fetch_related("estatus", "instancia")
+
+    if not user.estatus or user.estatus.nombre.lower() != "activo":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "USER_INACTIVE",
+                "detail": "Usuario inactivo o suspendido.",
+            },
+        )
+
+    return user
 
 async def generar_token_recuperacion_password(user: User) -> str:
     """
@@ -216,40 +319,6 @@ async def generar_token_recuperacion_password(user: User) -> str:
     )
 
     return token
-
-
-async def solicitar_recuperacion_password(correo_electronico: str):
-    """
-    Solicita recuperación de contraseña.
-
-    Por seguridad, siempre responde el mismo mensaje aunque el correo no exista.
-    Así evitamos revelar qué correos están registrados.
-    """
-
-    respuesta_generica = {
-        "message": "Si la cuenta existe, se enviará un correo con instrucciones para restablecer la contraseña.",
-    }
-
-    user = await User.get_or_none(
-        correo_electronico=correo_electronico,
-    )
-
-    if not user:
-        return respuesta_generica
-
-    if not user.contrasena_hasheada:
-        return respuesta_generica
-
-    token = await generar_token_recuperacion_password(user)
-
-    await enviar_correo_recuperacion_password(
-        user=user,
-        token=token,
-    )
-
-    return respuesta_generica
-
-
 
 
 async def enviar_recuperacion_password_por_admin(
@@ -358,4 +427,42 @@ async def restablecer_password(token: str, password_nueva: str):
 
     return {
         "message": "Contraseña restablecida correctamente. Ya puedes iniciar sesión.",
+    }
+
+
+async def cerrar_sesion(refresh_token: str):
+    """
+    Cierra sesión revocando el refresh token e invalidando
+    los access tokens activos del usuario.
+
+    Lo usa:
+    - POST /auth/logout
+    - cierre manual de sesión
+    - cierre por inactividad desde frontend
+    """
+
+    token_db = await TokenUsuario.get_or_none(
+        token=refresh_token,
+        tipo="REFRESH_TOKEN",
+    ).prefetch_related("usuario")
+
+    # Logout debe ser idempotente:
+    # si el token ya no existe, igual respondemos OK para que el frontend limpie sesión.
+    if not token_db:
+        return {
+            "message": "Sesión cerrada correctamente.",
+        }
+
+    user = token_db.usuario
+
+    # 1. Eliminamos el refresh token actual.
+    await token_db.delete()
+
+    # 2. Incrementamos token_version para invalidar access tokens activos.
+    await User.filter(id=user.id).update(
+        token_version=F("token_version") + 1
+    )
+
+    return {
+        "message": "Sesión cerrada correctamente.",
     }

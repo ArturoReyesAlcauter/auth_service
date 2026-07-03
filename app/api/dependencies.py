@@ -26,8 +26,9 @@ async def get_current_user(
         payload = decode_access_token(token)
         user_id: str | None = payload.get("sub")
         token_version_in_jwt: int | None = payload.get("token_version")
+        token_type: str | None = payload.get("type")
 
-        if user_id is None or token_version_in_jwt is None:
+        if user_id is None or token_version_in_jwt is None or token_type != "access":
             raise credentials_exception
 
     except InvalidTokenError:

@@ -1,7 +1,7 @@
 from uuid import UUID
 import re
 
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 # ==========================================
@@ -52,23 +52,33 @@ class TwoFactorVerifyRequest(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
-    
+
+
+class TempTokenRequest(BaseModel):
+    temp_token: str
+
+
+class TempTokenVerifyRequest(BaseModel):
+    temp_token: str
+    code: str = Field(..., min_length=6, max_length=6)
+
+
+class RedirectCodeRequest(BaseModel):
+    redirect_url: str
+
+
+class RedirectCodeResponse(BaseModel):
+    code: str
+    expires_in: int
+
+
+class ExchangeCodeRequest(BaseModel):
+    code: str
     
 
 # ==========================================
 # RECUPERACIÓN DE CONTRASEÑA
 # ==========================================
-
-class RecuperarPasswordRequest(BaseModel):
-    """
-    Body para solicitar el correo de recuperación de contraseña.
-
-    Este endpoint se usa cuando el usuario ya tiene contraseña,
-    pero la olvidó.
-    """
-
-    correo_electronico: EmailStr
-
 
 class RestablecerPasswordRequest(BaseModel):
     """

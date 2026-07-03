@@ -106,11 +106,11 @@ class TokenUsuario(Model):
         on_delete=fields.CASCADE
     )
 
-    token = fields.CharField(max_length=200, unique=True)
+    token = fields.CharField(max_length=500, unique=True)
 
     tipo = fields.CharField(
         max_length=50,
-        description="VERIFICACION_CORREO, RECUPERACION_CONTRASENA"
+        description="VERIFICACION_CORREO, RECUPERACION_CONTRASENA, REFRESH_TOKEN, REDIRECT_CODE"
     )
 
     fecha_expiracion = fields.DatetimeField()

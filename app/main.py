@@ -1,9 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from tortoise.contrib.fastapi import register_tortoise
 
 from app.core.config import settings, TORTOISE_ORM
 from app.api.routes import auth, users
+from app.core.errors import http_exception_handler, validation_exception_handler
 
 ORIGENES_PERMITIDOS = [
     # Frontend Vite local
@@ -39,6 +41,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_exception_handler(HTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 app.include_router(auth.router, prefix="/auth")
 app.include_router(users.router)
