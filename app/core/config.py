@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Login PorTusDerechos"
     VERSION: str = "1.0.0"
+    TOTP_ISSUER: str = "Acceso Central - SNDIF"
 
     DATABASE_URL: str = "sqlite://database.db"
 

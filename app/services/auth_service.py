@@ -139,7 +139,7 @@ def get_provisioning_uri(secret: str, account_name: str) -> str:
 
     return totp.provisioning_uri(
         name=account_name,
-        issuer_name="Login PorTusDerechos",
+        issuer_name=settings.TOTP_ISSUER,
     )
 
 
