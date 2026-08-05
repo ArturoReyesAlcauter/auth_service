@@ -1,5 +1,6 @@
-from uuid import UUID
 import re
+from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,45 +23,142 @@ PASSWORD_ERROR_MSG = (
 # ==========================================
 # JWT / LOGIN
 # ==========================================
-# Lo que la API devuelve cuando el login es exitoso
+
 class Token(BaseModel):
+    """Tokens entregados cuando la autenticación termina correctamente."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
 
 
-# Lo que guardaremos dentro del token JWT
 class TokenPayload(BaseModel):
+    """Contenido básico almacenado dentro de un JWT."""
+
     sub: str | None = None
 
 
-# Datos que recibirá el endpoint /auth/login
 class LoginRequest(BaseModel):
-    curp: str = Field(..., min_length=18, max_length=18)
+    """Credenciales de inicio de sesión."""
+
+    curp: str = Field(
+        ...,
+        min_length=18,
+        max_length=18,
+    )
     password: str
 
 
-# Datos para configurar Google Authenticator
+# ==========================================
+# RESPUESTAS DEL FLUJO 2FA
+# ==========================================
+
+class TwoFactorSetupRequiredResponse(BaseModel):
+    """
+    Respuesta de /auth/login cuando el usuario todavía
+    no ha configurado la autenticación en dos pasos.
+    """
+
+    status: Literal[
+        "two_factor_setup_required"
+    ] = "two_factor_setup_required"
+
+    temp_token: str
+    temp_token_expires_in: int
+
+    two_factor_configured: Literal[False] = False
+
+    message: str
+
+
+class TwoFactorVerificationRequiredResponse(BaseModel):
+    """
+    Respuesta de /auth/login cuando el usuario ya tiene
+    configurada la autenticación en dos pasos.
+    """
+
+    status: Literal[
+        "pending_2fa"
+    ] = "pending_2fa"
+
+    temp_token: str
+    temp_token_expires_in: int
+
+    two_factor_configured: Literal[True] = True
+
+    message: str
+
+
+class TwoFactorSetupResponse(BaseModel):
+    """
+    Información que necesita el frontend para mostrar
+    la configuración de Google Authenticator.
+    """
+
+    status: Literal[
+        "two_factor_setup_required"
+    ] = "two_factor_setup_required"
+
+    two_factor_configured: Literal[False] = False
+
+    qr_uri: str
+    manual_key: str
+
+
+# ==========================================
+# REQUESTS DEL FLUJO 2FA
+# ==========================================
+
 class TwoFactorSetupRequest(BaseModel):
+    """
+    Esquema anterior conservado temporalmente por compatibilidad.
+
+    El flujo vigente utiliza TempTokenRequest.
+    """
+
     user_id: UUID
 
 
-# Datos para verificar o habilitar 2FA
 class TwoFactorVerifyRequest(BaseModel):
-    user_id: UUID
-    code: str = Field(..., min_length=6, max_length=6)
+    """
+    Esquema anterior conservado temporalmente por compatibilidad.
 
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    El flujo vigente utiliza TempTokenVerifyRequest.
+    """
+
+    user_id: UUID
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+    )
 
 
 class TempTokenRequest(BaseModel):
+    """Token temporal recibido desde /auth/login."""
+
     temp_token: str
 
 
 class TempTokenVerifyRequest(BaseModel):
+    """Token temporal y código TOTP de seis dígitos."""
+
     temp_token: str
-    code: str = Field(..., min_length=6, max_length=6)
+
+    code: str = Field(
+        ...,
+        min_length=6,
+        max_length=6,
+        pattern=r"^\d{6}$",
+    )
+
+
+# ==========================================
+# REFRESH TOKEN Y REDIRECCIÓN SSO
+# ==========================================
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 
 class RedirectCodeRequest(BaseModel):
@@ -74,7 +172,7 @@ class RedirectCodeResponse(BaseModel):
 
 class ExchangeCodeRequest(BaseModel):
     code: str
-    
+
 
 # ==========================================
 # RECUPERACIÓN DE CONTRASEÑA
@@ -82,15 +180,29 @@ class ExchangeCodeRequest(BaseModel):
 
 class RestablecerPasswordRequest(BaseModel):
     """
-    Body para restablecer la contraseña usando el token enviado por correo.
+    Body para restablecer la contraseña usando el token
+    enviado por correo.
     """
 
     token: str
-    password_nueva: str = Field(..., min_length=8)
+
+    password_nueva: str = Field(
+        ...,
+        min_length=8,
+    )
 
     @field_validator("password_nueva")
     @classmethod
-    def validar_password_fuerte(cls, v: str) -> str:
-        if not re.match(PASSWORD_REGEX, v):
-            raise ValueError(PASSWORD_ERROR_MSG)
-        return v
+    def validar_password_fuerte(
+        cls,
+        value: str,
+    ) -> str:
+        if not re.match(
+            PASSWORD_REGEX,
+            value,
+        ):
+            raise ValueError(
+                PASSWORD_ERROR_MSG,
+            )
+
+        return value

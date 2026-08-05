@@ -1,11 +1,15 @@
 from typing import Annotated
 
-import io
-import qrcode
-
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.security import OAuth2PasswordRequestForm
-from fastapi.responses import StreamingResponse
+
 
 from app.api.dependencies import get_current_active_user
 from app.core.config import settings
@@ -25,6 +29,9 @@ from app.schemas.token import (
     TempTokenRequest,
     TempTokenVerifyRequest,
     Token,
+    TwoFactorSetupRequiredResponse,
+    TwoFactorSetupResponse,
+    TwoFactorVerificationRequiredResponse,
 )
 from app.services import auth_service
 from app.services.rate_limit_service import verificar_rate_limit
@@ -145,25 +152,44 @@ async def obtener_usuario_desde_temp_token(temp_token: str, purpose: str) -> Use
 
 # --- 1. LOGIN PASO 1: Validar credenciales ---
 
-@router.post("/login")
+@router.post(
+    "/login",
+    response_model=(
+        TwoFactorSetupRequiredResponse
+        | TwoFactorVerificationRequiredResponse
+    ),
+)
 async def login_access_token(
     request: Request,
-    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    form_data: Annotated[
+        OAuth2PasswordRequestForm,
+        Depends(),
+    ],
 ):
     """
     Paso 1: valida CURP y contraseña.
 
-    No entrega JWT de sesión todavía. Entrega temp_token para continuar
-    configuración o verificación de 2FA.
+    No entrega tokens de sesión todavía.
+
+    Devuelve un token temporal para continuar con:
+    - la configuración inicial de 2FA; o
+    - la verificación de un 2FA ya configurado.
     """
 
-    ip_cliente = request.client.host if request.client else "unknown"
+    ip_cliente = (
+        request.client.host
+        if request.client
+        else "unknown"
+    )
 
     verificar_rate_limit(
         key=f"login:ip:{ip_cliente}",
         max_intentos=20,
         ventana_segundos=60,
-        mensaje="Demasiados intentos de inicio de sesión desde esta IP. Intenta de nuevo en un momento.",
+        mensaje=(
+            "Demasiados intentos de inicio de sesión "
+            "desde esta IP. Intenta de nuevo en un momento."
+        ),
     )
 
     user = await auth_service.authenticate_user(
@@ -174,40 +200,67 @@ async def login_access_token(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "INVALID_CREDENTIALS", "detail": "CURP o contraseña incorrectos"},
+            detail={
+                "code": "INVALID_CREDENTIALS",
+                "detail": "CURP o contraseña incorrectos",
+            },
         )
 
     if not usuario_esta_activo(user):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "USER_INACTIVE", "detail": "Usuario inactivo"},
+            detail={
+                "code": "USER_INACTIVE",
+                "detail": "Usuario inactivo",
+            },
         )
 
     await validar_ultima_sesion_o_revocar(user)
 
     if user.is_2fa_enabled:
+        expire_minutes = 10
+
         temp_token = create_temp_token(
-            data={"sub": str(user.id), "token_version": user.token_version},
+            data={
+                "sub": str(user.id),
+                "token_version": user.token_version,
+            },
             purpose="login_2fa",
-            expire_minutes=10,
+            expire_minutes=expire_minutes,
         )
-        return {
-            "status": "pending_2fa",
-            "temp_token": temp_token,
-            "message": "Ingresa tu código de Google Authenticator",
-        }
+
+        return TwoFactorVerificationRequiredResponse(
+            temp_token=temp_token,
+            temp_token_expires_in=(
+                expire_minutes * 60
+            ),
+            message=(
+                "Ingresa tu código de "
+                "Google Authenticator."
+            ),
+        )
+
+    expire_minutes = 60
 
     temp_token = create_temp_token(
-        data={"sub": str(user.id), "token_version": user.token_version},
+        data={
+            "sub": str(user.id),
+            "token_version": user.token_version,
+        },
         purpose="setup_2fa",
-        expire_minutes=60,
+        expire_minutes=expire_minutes,
     )
-    return {
-        "status": "pending_setup",
-        "temp_token": temp_token,
-        "message": "Es obligatorio configurar la seguridad de 2 pasos.",
-    }
 
+    return TwoFactorSetupRequiredResponse(
+        temp_token=temp_token,
+        temp_token_expires_in=(
+            expire_minutes * 60
+        ),
+        message=(
+            "Es obligatorio configurar "
+            "la seguridad de 2 pasos."
+        ),
+    )
 
 # --- 2. LOGIN PASO 2: Validar el código 2FA ---
 
@@ -248,83 +301,172 @@ async def login_verify_2fa(
 
 # --- RUTAS DE CONFIGURACIÓN 2FA ---
 
-@router.post("/setup")
+@router.post(
+    "/setup",
+    response_model=TwoFactorSetupResponse,
+)
 async def setup_2fa(
     request: Request,
+    response: Response,
     data: TempTokenRequest,
-):
-    ip_cliente = request.client.host if request.client else "unknown"
+) -> TwoFactorSetupResponse:
+    """
+    Genera o recupera la configuración inicial de 2FA.
+
+    Devuelve la URI otpauth para que el frontend genere
+    el código QR y la clave manual para configuración.
+    """
+
+    ip_cliente = (
+        request.client.host
+        if request.client
+        else "unknown"
+    )
 
     verificar_rate_limit(
         key=f"setup_2fa:ip:{ip_cliente}",
         max_intentos=10,
         ventana_segundos=60,
-        mensaje="Demasiadas solicitudes para configurar 2FA desde esta IP.",
+        mensaje=(
+            "Demasiadas solicitudes para configurar "
+            "2FA desde esta IP."
+        ),
     )
 
-    user = await obtener_usuario_desde_temp_token(data.temp_token, purpose="setup_2fa")
+    user = await obtener_usuario_desde_temp_token(
+        data.temp_token,
+        purpose="setup_2fa",
+    )
 
     if user.is_2fa_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "TWO_FACTOR_ALREADY_ENABLED", "detail": "2FA ya está activado."},
+            detail={
+                "code": "TWO_FACTOR_ALREADY_ENABLED",
+                "detail": "2FA ya está activado.",
+            },
         )
 
-    secret = auth_service.generate_totp_secret()
-    user.totp_secret = secret
-    await user.save()
+    secret = user.totp_secret
 
-    uri = auth_service.get_provisioning_uri(
+    if not secret:
+        secret = auth_service.generate_totp_secret()
+        user.totp_secret = secret
+
+        await user.save(
+            update_fields=[
+                "totp_secret",
+                "fecha_actualizacion",
+            ]
+        )
+
+    qr_uri = auth_service.get_provisioning_uri(
         secret=secret,
         account_name=user.correo_electronico,
     )
+    
+    response.headers["Cache-Control"] = (
+    "no-store, no-cache, must-revalidate, private"
+    )
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
 
-    qr = qrcode.make(uri)
-    buf = io.BytesIO()
-    qr.save(buf, format="PNG")
-    buf.seek(0)
-
-    return StreamingResponse(
-        buf,
-        media_type="image/png",
+    return TwoFactorSetupResponse(
+        qr_uri=qr_uri,
+        manual_key=secret,
     )
 
 
-@router.post("/enable", response_model=Token)
+@router.post(
+    "/enable",
+    response_model=Token,
+)
 async def enable_2fa(
     request: Request,
     data: TempTokenVerifyRequest,
 ):
-    """Verifica el primer código, activa 2FA y entrega tokens de sesión."""
+    """
+    Verifica el primer código TOTP, activa 2FA
+    y entrega los tokens definitivos de sesión.
+    """
 
-    ip_cliente = request.client.host if request.client else "unknown"
+    ip_cliente = (
+        request.client.host
+        if request.client
+        else "unknown"
+    )
 
     verificar_rate_limit(
         key=f"enable_2fa:ip:{ip_cliente}",
         max_intentos=20,
         ventana_segundos=60,
-        mensaje="Demasiados intentos para activar 2FA desde esta IP. Intenta de nuevo en un momento.",
+        mensaje=(
+            "Demasiados intentos para activar 2FA "
+            "desde esta IP. Intenta de nuevo en un momento."
+        ),
     )
 
-    user = await obtener_usuario_desde_temp_token(data.temp_token, purpose="setup_2fa")
+    user = await obtener_usuario_desde_temp_token(
+        data.temp_token,
+        purpose="setup_2fa",
+    )
+
+    if user.is_2fa_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "TWO_FACTOR_ALREADY_ENABLED",
+                "detail": (
+                    "La autenticación en dos pasos "
+                    "ya está activada."
+                ),
+            },
+        )
 
     if not user.totp_secret:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "TWO_FACTOR_SETUP_REQUIRED", "detail": "Primero debes generar el QR (setup)."},
+            detail={
+                "code": "TWO_FACTOR_SETUP_REQUIRED",
+                "detail": (
+                    "Primero debes generar la configuración "
+                    "mediante POST /auth/setup."
+                ),
+            },
         )
 
-    is_valid = auth_service.verify_totp_code(user.totp_secret, data.code)
+    codigo_valido = auth_service.verify_totp_code(
+        user.totp_secret,
+        data.code,
+    )
 
-    if not is_valid:
+    if not codigo_valido:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "TWO_FACTOR_CODE_INVALID", "detail": "Código inválido. Intenta de nuevo."},
+            detail={
+                "code": "TWO_FACTOR_CODE_INVALID",
+                "detail": (
+                    "El código de autenticación es inválido."
+                ),
+            },
         )
 
     user.is_2fa_enabled = True
-    await user.save()
 
+    # Cambiar esta versión invalida inmediatamente
+    # el temp_token usado para configurar 2FA.
+    user.token_version += 1
+
+    await user.save(
+        update_fields=[
+            "is_2fa_enabled",
+            "token_version",
+            "fecha_actualizacion",
+        ]
+    )
+
+    # Los tokens definitivos se crean usando
+    # la nueva versión del usuario.
     return await emitir_tokens_usuario(user)
 
 
