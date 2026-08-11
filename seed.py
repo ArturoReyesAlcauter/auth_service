@@ -3,7 +3,7 @@ import asyncio
 from tortoise import Tortoise
 from tortoise.expressions import F
 
-from app.core.config import TORTOISE_ORM
+from app.core.config import TORTOISE_ORM, settings
 from app.core.security import get_password_hash
 from app.models.user import (
     Accion,
@@ -23,7 +23,7 @@ from app.models.user import (
 # ==========================================
 
 ADMIN_CURP = "AURA000101HDFXXX01"
-ADMIN_PASSWORD = "admin123!"
+ADMIN_PASSWORD = settings.ADMIN_INITIAL_PASSWORD
 ADMIN_EMAIL = "admin@portusderechos.gob.mx"
 ADMIN_ENTIDAD_FEDERATIVA_ID = 9
 

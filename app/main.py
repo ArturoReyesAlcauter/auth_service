@@ -59,5 +59,5 @@ register_tortoise(
 @app.get("/")
 async def root():
     return {
-        "message": "Login Sistema de información Por Tus Derechos. Ve a /docs para la documentación."
+        "message": "API Central de Autenticación y Autorización - Sistema Integral de la DGCP. Ve a /docs para la documentación."
     }
