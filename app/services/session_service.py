@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
-
+from tortoise.expressions import F
 from app.models.user import (
     User,
     UltimaSesion,
@@ -45,23 +45,28 @@ async def resetear_ultima_sesion(usuario: User):
     return ultima_sesion
 
 
-async def invalidar_sesiones_usuario(usuario: User):
+async def invalidar_sesiones_usuario(
+    usuario: User,
+) -> User:
     """
-    Invalida todos los JWT activos del usuario.
+    Invalida todos los JWT activos del usuario incrementando
+    token_version de forma atómica en la base de datos.
 
-    Se incrementa token_version. Los tokens existentes,
-    que contienen la versión anterior, dejarán de ser válidos.
+    Los JWT existentes contienen la versión anterior y dejan
+    de ser válidos inmediatamente.
 
-    El usuario deberá iniciar sesión nuevamente.
+    Después de actualizar la base de datos, refrescamos el
+    objeto recibido para mantener sincronizado token_version.
     """
 
-    usuario.token_version += 1
+    await User.filter(
+        id=usuario.id
+    ).update(
+        token_version=F("token_version") + 1
+    )
 
-    await usuario.save(
-        update_fields=[
-            "token_version",
-            "fecha_actualizacion",
-        ]
+    await usuario.refresh_from_db(
+        fields=["token_version"]
     )
 
     return usuario
