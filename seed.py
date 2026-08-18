@@ -36,6 +36,13 @@ GRUPOS_LEGACY = ["MP", "MH", "VF", "RNCAS"]
 
 GRUPO_MESA_AYUDA = "MESA_AYUDA"
 GRUPO_FORMATOS_ATENCIONES = "FORMATOS_ATENCIONES"
+GRUPOS_SEMAFORO = {
+    "SEMAFORO_ADMIN": "Administración y Supervisión Global del Semáforo",
+    "SEMAFORO_DGRJRDNNA": "Dirección General de Regulación, Jurisdicción y Restitución de Derechos de NNA",
+    "SEMAFORO_DGRCAS": "Dirección General de Representación Jurídica y Restitución de NNA",
+    "SEMAFORO_DGNPDDNNA": "Dirección General de Normatividad, Promoción y Difusión de los Derechos de NNA",
+    "SEMAFORO_DGCP": "Dirección General de Coordinación y Políticas",
+}
 
 
 ACCIONES_BITACORA = {
@@ -257,6 +264,30 @@ ACCIONES_REPORTES_FORMATOS = {
     ),
 }
 
+
+# 2. Acciones del Semáforo
+ACCIONES_SEMAFORO_CRUD = {
+    "VER_ACCIONES_SEMAFORO": "Permite visualizar las acciones de su respectiva DG.",
+    "CREAR_ACCION_SEMAFORO": "Permite crear una nueva acción en el semáforo.",
+    "EDITAR_ACCION_SEMAFORO": "Permite editar las acciones pertenecientes a su DG.",
+    "ELIMINAR_ACCION_SEMAFORO": "Permite eliminar lógicamente una acción.",
+}
+
+ACCIONES_SEMAFORO_DASHBOARD = {
+    "VER_DASHBOARD_SEMAFORO": "Permite consultar las estadísticas del semáforo.",
+}
+
+ACCIONES_SEMAFORO_ADMIN = {
+    "ADMINISTRAR_TODO_SEMAFORO": "Permite consultar, editar y supervisar los registros de todas las DGs en el Semáforo.",
+}
+
+# 3. Usuarios base de prueba para Semáforo (Las CURP deben ser de 18 caracteres)
+USUARIOS_PRUEBA_SEMAFORO = [
+    {"curp": "DGRJRDNNA000000000", "nombre": "Usuario", "apellido": "DGRJRDNNA", "grupo": "SEMAFORO_DGRJRDNNA"},
+    {"curp": "DGRCAS000000000000", "nombre": "Usuario", "apellido": "DGRCAS", "grupo": "SEMAFORO_DGRCAS"},
+    {"curp": "DGNPDDNNA000000000", "nombre": "Usuario", "apellido": "DGNPDDNNA", "grupo": "SEMAFORO_DGNPDDNNA"},
+    {"curp": "DGCP00000000000000", "nombre": "Usuario", "apellido": "DGCP", "grupo": "SEMAFORO_DGCP"},
+]
 
 async def asegurar_estatus_usuario(
     id_estatus: int,
@@ -648,6 +679,62 @@ async def main() -> None:
         )
 
         # ==========================================
+        # X. MÓDULOS Y GRUPOS DE SEMÁFORO
+        # ==========================================
+        
+        grupos_semaforo_obj = []
+        
+        for nombre_grupo, desc_grupo in GRUPOS_SEMAFORO.items():
+            # 1. Asegurar la creación del grupo
+            grupo, creado = await asegurar_grupo(nombre_grupo, desc_grupo)
+            grupos_semaforo_obj.append(grupo)
+            permisos_modificados = permisos_modificados or creado
+            grupos_actuales.append(grupo) # Agregar a la lista global del seed
+
+            # 2. Lógica ramificada: DGs normales vs Administrador
+            if nombre_grupo != "SEMAFORO_ADMIN":
+                # ---------------------------------------------------------
+                # RAMA A: Módulos estándar para las DGs (CRUD y Dashboard)
+                # ---------------------------------------------------------
+                
+                # A.1. Módulo de Gestión de Acciones
+                modulo_crud, creado = await asegurar_modulo(
+                    grupo, "GESTION_ACCIONES", "Gestión del CRUD de Semáforo"
+                )
+                permisos_modificados = permisos_modificados or creado
+                modulos_actuales.append(modulo_crud)
+
+                acciones_crud, cambios = await asegurar_acciones(modulo_crud, ACCIONES_SEMAFORO_CRUD)
+                permisos_modificados = permisos_modificados or cambios
+                acciones_actuales.extend(acciones_crud)
+
+                # A.2. Módulo de Dashboard
+                modulo_dash, creado = await asegurar_modulo(
+                    grupo, "DASHBOARD_SEMAFORO", "Estadísticas del Semáforo"
+                )
+                permisos_modificados = permisos_modificados or creado
+                modulos_actuales.append(modulo_dash)
+
+                acciones_dash, cambios = await asegurar_acciones(modulo_dash, ACCIONES_SEMAFORO_DASHBOARD)
+                permisos_modificados = permisos_modificados or cambios
+                acciones_actuales.extend(acciones_dash)
+
+            else:
+                # ---------------------------------------------------------
+                # RAMA B: Módulo exclusivo para el Grupo Administrador
+                # ---------------------------------------------------------
+                
+                modulo_admin, creado = await asegurar_modulo(
+                    grupo, "CONTROL_GLOBAL_SEMAFORO", "Supervisión total del Semáforo"
+                )
+                permisos_modificados = permisos_modificados or creado
+                modulos_actuales.append(modulo_admin) # ¡CRÍTICO! Para que no sea eliminado
+
+                acciones_admin, cambios = await asegurar_acciones(modulo_admin, ACCIONES_SEMAFORO_ADMIN)
+                permisos_modificados = permisos_modificados or cambios
+                acciones_actuales.extend(acciones_admin) # ¡CRÍTICO! Para que no sean eliminadas
+                
+        # ==========================================
         # 7. USUARIO ADMIN PREDETERMINADO
         # ==========================================
 
@@ -775,6 +862,46 @@ async def main() -> None:
             ).update(
                 token_version=F("token_version") + 1
             )
+
+        # ==========================================
+        # 8.5. CREACIÓN DE USUARIOS DE PRUEBA (SEMÁFORO)
+        # ==========================================
+        print("\nSincronizando usuarios de prueba para Semáforo...")
+        contrasena_test = get_password_hash("Semaforo2026!")
+
+        for u_data in USUARIOS_PRUEBA_SEMAFORO:
+            user_test = await User.get_or_none(curp=u_data["curp"])
+            
+            if not user_test:
+                user_test = await User.create(
+                    curp=u_data["curp"],
+                    nombre=u_data["nombre"],
+                    primer_apellido=u_data["apellido"],
+                    segundo_apellido="Prueba",
+                    correo_electronico=f"{u_data['apellido'].lower()}@portusderechos.gob.mx",
+                    entidad_federativa_id=9, # CDMX por defecto
+                    numero_telefono="5500000000",
+                    contrasena_hasheada=contrasena_test,
+                    is_2fa_enabled=False,
+                    estatus=estatus_activo,
+                    instancia=instancia_sndif,
+                    intentos_login=0,
+                )
+                print(f"- Usuario creado: {u_data['curp']}")
+            
+            # Buscar el grupo correspondiente
+            grupo_correspondiente = next(g for g in grupos_semaforo_obj if g.nombre == u_data["grupo"])
+            
+            # Asignar Grupo al usuario
+            await UsuarioGrupo.get_or_create(usuario=user_test, grupo=grupo_correspondiente)
+            
+            # Asignar los módulos y acciones de ese grupo al usuario
+            modulos_del_grupo = await Modulo.filter(grupo=grupo_correspondiente)
+            for mod in modulos_del_grupo:
+                await UsuarioModulo.get_or_create(usuario=user_test, modulo=mod)
+                acciones_del_modulo = await Accion.filter(modulo=mod)
+                for acc in acciones_del_modulo:
+                    await UsuarioAccion.get_or_create(usuario=user_test, accion=acc)
 
         # ==========================================
         # 9. RESULTADO DEL SEED
