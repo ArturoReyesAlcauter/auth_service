@@ -1,10 +1,10 @@
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 
 from app.models.user import (
-    UltimaSesion,
     User,
+    UltimaSesion,
     UsuarioAccion,
     UsuarioModulo,
     UsuarioGrupo,
@@ -14,10 +14,16 @@ from app.models.user import (
 DIAS_MAXIMOS_INACTIVIDAD = 90
 
 
-# Servicio para manejar la sesión del usuario.
-# Si el usuario no tiene registro en ultima_sesion, lo crea.
-# Si el usuario ya tiene registro, solo actualiza la fecha.
 async def resetear_ultima_sesion(usuario: User):
+    """
+    Registra la actividad más reciente del usuario.
+
+    Si el usuario todavía no tiene registro en ultima_sesion,
+    se crea.
+
+    Si ya existe, se actualiza la fecha de última sesión.
+    """
+
     ahora = datetime.now(timezone.utc)
 
     ultima_sesion, _ = await UltimaSesion.get_or_create(
@@ -28,39 +34,83 @@ async def resetear_ultima_sesion(usuario: User):
     )
 
     ultima_sesion.fecha_inicio_sesion = ahora
-    await ultima_sesion.save(update_fields=["fecha_inicio_sesion", "fecha_actualizacion"])
+
+    await ultima_sesion.save(
+        update_fields=[
+            "fecha_inicio_sesion",
+            "fecha_actualizacion",
+        ]
+    )
 
     return ultima_sesion
 
 
+async def invalidar_sesiones_usuario(usuario: User):
+    """
+    Invalida todos los JWT activos del usuario.
+
+    Se incrementa token_version. Los tokens existentes,
+    que contienen la versión anterior, dejarán de ser válidos.
+
+    El usuario deberá iniciar sesión nuevamente.
+    """
+
+    usuario.token_version += 1
+
+    await usuario.save(
+        update_fields=[
+            "token_version",
+            "fecha_actualizacion",
+        ]
+    )
+
+    return usuario
+
+
 async def revocar_accesos_usuario(usuario: User):
     """
-    Elimina los accesos del usuario sin cambiar su estatus.
+    Elimina todos los permisos asignados directamente al usuario.
 
-    Orden:
-    1. acciones
-    2. módulos
-    3. registros/grupos
+    Se eliminan:
+
+    1. Acciones
+    2. Módulos
+    3. Grupos
+
+    No elimina al usuario ni modifica su estatus.
     """
 
-    await UsuarioAccion.filter(usuario_id=usuario.id).delete()
-    await UsuarioModulo.filter(usuario_id=usuario.id).delete()
-    await UsuarioGrupo.filter(usuario_id=usuario.id).delete()
+    await UsuarioAccion.filter(
+        usuario_id=usuario.id
+    ).delete()
+
+    await UsuarioModulo.filter(
+        usuario_id=usuario.id
+    ).delete()
+
+    await UsuarioGrupo.filter(
+        usuario_id=usuario.id
+    ).delete()
 
 
 async def validar_ultima_sesion_o_revocar(usuario: User):
     """
-    Valida si el usuario superó 90 días desde su última sesión.
+    Verifica si el usuario lleva más de 90 días sin actividad.
 
-    Si supera 90 días:
-    - elimina acciones, módulos y registros/grupos
-    - no cambia estatus
-    - no actualiza la fecha
-    - niega el acceso
+    Comportamiento:
 
-    Si no supera 90 días:
-    - actualiza fecha_inicio_sesion
-    - permite continuar
+    - Primera sesión:
+        Se crea el registro y se permite el acceso.
+
+    - Menos de 90 días:
+        Se actualiza la fecha de última sesión y se permite el acceso.
+
+    - Más de 90 días:
+        Se eliminan sus permisos y se rechaza el acceso.
+
+    Importante:
+    - No cambia el estatus del usuario.
+    - No actualiza la fecha cuando la cuenta ya superó los 90 días.
     """
 
     ahora = datetime.now(timezone.utc)
@@ -72,25 +122,41 @@ async def validar_ultima_sesion_o_revocar(usuario: User):
         },
     )
 
-    # Si apenas se creó el registro, es su primera sesión registrada.
-    # Permitimos el acceso.
+    # Primera sesión registrada.
     if creada:
         return ultima_sesion
 
     if ultima_sesion.fecha_inicio_sesion:
-        fecha_limite = ultima_sesion.fecha_inicio_sesion + timedelta(
-            days=DIAS_MAXIMOS_INACTIVIDAD
+
+        fecha_limite = (
+            ultima_sesion.fecha_inicio_sesion
+            + timedelta(days=DIAS_MAXIMOS_INACTIVIDAD)
         )
 
         if ahora > fecha_limite:
+
             await revocar_accesos_usuario(usuario)
+
+            # También invalidamos cualquier JWT que pudiera
+            # seguir activo.
+            await invalidar_sesiones_usuario(usuario)
 
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Usuario sin acceso por inactividad mayor a 3 meses. Contacte a un administrador para reactivar sus permisos.",
+                detail=(
+                    "Usuario sin acceso por inactividad mayor a 3 meses. "
+                    "Contacte a un administrador para reactivar sus permisos."
+                ),
             )
 
+    # El usuario sigue activo.
     ultima_sesion.fecha_inicio_sesion = ahora
-    await ultima_sesion.save(update_fields=["fecha_inicio_sesion", "fecha_actualizacion"])
+
+    await ultima_sesion.save(
+        update_fields=[
+            "fecha_inicio_sesion",
+            "fecha_actualizacion",
+        ]
+    )
 
     return ultima_sesion

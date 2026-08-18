@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     ALLOWED_REDIRECT_URLS: str = (
         "http://127.0.0.1:5173/app/dashboard,"
         "http://127.0.0.1:5173/app/formato-nna,"
-        "http://127.0.0.1:5173/app/usuarios"
+        "http://127.0.0.1:5173/app/usuarios,"
+        "http://127.0.0.1:5175/app/dashboard"
     )
 
     REDIRECT_CODE_EXPIRE_SECONDS: int = 60

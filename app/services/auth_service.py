@@ -193,28 +193,56 @@ async def revoke_refresh_token(token: str):
 
 
 def obtener_redirect_urls_permitidas() -> set[str]:
+    """
+    Obtiene las URLs autorizadas para el flujo de redirección SSO.
+
+    ALLOWED_REDIRECT_URLS contiene las URLs separadas por comas.
+
+    Se elimina únicamente el espacio accidental alrededor de cada
+    valor configurado en el .env, pero NO se modifica la URL.
+    """
+
     return {
-        url.strip().rstrip("/")
+        url.strip()
         for url in settings.ALLOWED_REDIRECT_URLS.split(",")
         if url.strip()
     }
 
 
-def validar_redirect_url_permitida(redirect_url: str) -> str:
-    clean_url = redirect_url.strip().rstrip("/")
+def validar_redirect_url_permitida(
+    redirect_url: str,
+) -> str:
+    """
+    Valida que redirect_url coincida exactamente con una URL
+    incluida en ALLOWED_REDIRECT_URLS.
+
+    No se normaliza:
+    - protocolo
+    - host
+    - puerto
+    - ruta
+    - slash final
+    - query string
+    - fragmento
+
+    Esto mantiene una allowlist estricta y evita destinos
+    no autorizados.
+    """
+
     urls_permitidas = obtener_redirect_urls_permitidas()
 
-    if clean_url not in urls_permitidas:
+    if redirect_url not in urls_permitidas:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "code": "REDIRECT_URL_NOT_ALLOWED",
-                "detail": "La URL de redirección no está permitida.",
+                "detail": (
+                    "La URL de redirección no está permitida."
+                ),
             },
         )
 
-    return clean_url
-
+    return redirect_url
 
 async def generar_redirect_code(user: User, redirect_url: str) -> dict:
     """
