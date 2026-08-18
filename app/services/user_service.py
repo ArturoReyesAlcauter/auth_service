@@ -4,7 +4,6 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
-from tortoise.expressions import F
 
 from app.core.security import (
     get_password_hash,
@@ -540,16 +539,8 @@ async def cambiar_estatus_usuario(
         ]
     )
 
-    # Invalidar JWT por cambio de estatus.
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
+    # Invalidar todos los JWT activos por cambio de estatus.
     await invalidar_sesiones_usuario(user)
-
-    await user.refresh_from_db()
 
     await user.fetch_related(
         "estatus",
@@ -567,7 +558,6 @@ async def cambiar_estatus_usuario(
     )
 
     return user
-
 
 # ============================================================
 # LISTAR USUARIOS
@@ -786,11 +776,7 @@ async def assign_user_grupo(
     # Cambio de permisos:
     # actualizar actividad + invalidar sesiones.
     await resetear_ultima_sesion(user)
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
+
     await invalidar_sesiones_usuario(user)
 
     await asignacion.fetch_related(
@@ -860,12 +846,6 @@ async def assign_user_modulo(
 
     await resetear_ultima_sesion(user)
 
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
     await invalidar_sesiones_usuario(user)
 
     await asignacion.fetch_related(
@@ -874,6 +854,10 @@ async def assign_user_modulo(
 
     return asignacion
 
+
+# ============================================================
+# ASIGNAR ACCIÓN
+# ============================================================
 
 # ============================================================
 # ASIGNAR ACCIÓN
@@ -917,7 +901,7 @@ async def assign_user_accion(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                "Solo el super usuario puede asignar "
+                "Solo un SUPER_ADMIN puede asignar "
                 "permisos SUPER_ADMIN."
             ),
         )
@@ -954,12 +938,7 @@ async def assign_user_accion(
 
     await resetear_ultima_sesion(user)
 
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
+    # Una sola invalidación.
     await invalidar_sesiones_usuario(user)
 
     await asignacion.fetch_related(
@@ -968,6 +947,9 @@ async def assign_user_accion(
 
     return asignacion
 
+# ============================================================
+# REMOVER GRUPO
+# ============================================================
 
 # ============================================================
 # REMOVER GRUPO
@@ -1050,14 +1032,7 @@ async def remove_user_grupo(
 
     await asignacion.delete()
 
-    # Cambio de permisos:
-    # token_version + invalidación de sesiones.
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
+    # El cambio de permisos invalida los JWT actuales.
     await invalidar_sesiones_usuario(user)
 
     return {
@@ -1137,12 +1112,7 @@ async def remove_user_modulo(
 
     await asignacion.delete()
 
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
+    # El cambio de permisos invalida los JWT actuales.
     await invalidar_sesiones_usuario(user)
 
     return {
@@ -1153,7 +1123,6 @@ async def remove_user_modulo(
         "modulo_eliminado": True,
         "grupo_padre_eliminado": False,
     }
-
 
 # ============================================================
 # REMOVER ACCIÓN
@@ -1207,12 +1176,7 @@ async def remove_user_accion(
 
     await asignacion.delete()
 
-    await User.filter(
-        id=user_id
-    ).update(
-        token_version=F("token_version") + 1
-    )
-
+    # El cambio de permisos invalida los JWT actuales.
     await invalidar_sesiones_usuario(user)
 
     return {
@@ -1220,7 +1184,6 @@ async def remove_user_accion(
         "user_id": str(user_id),
         "accion_id": str(accion_id),
     }
-
 
 # ============================================================
 # VALIDAR ACCIÓN
@@ -1877,20 +1840,11 @@ async def assign_user_permisos_masivos(
 
     if permisos_nuevos_asignados:
 
-        # Actividad administrativa.
+        # Registrar actividad administrativa.
         await resetear_ultima_sesion(user)
 
-        # IMPORTANTE:
-        # La operación masiva incrementa token_version
-        # UNA SOLA VEZ.
-        await User.filter(
-            id=user_id
-        ).update(
-            token_version=F("token_version") + 1
-        )
-
-        # Y también invalida las sesiones activas
-        # UNA SOLA VEZ.
+        # Invalidar los JWT UNA SOLA VEZ,
+        # aunque se hayan asignado varios permisos.
         await invalidar_sesiones_usuario(user)
 
     # ========================================================
