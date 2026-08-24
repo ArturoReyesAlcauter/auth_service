@@ -281,7 +281,7 @@ ACCIONES_SEMAFORO_ADMIN = {
     "ADMINISTRAR_TODO_SEMAFORO": "Permite consultar, editar y supervisar los registros de todas las DGs en el Semáforo.",
 }
 
-# 3. Usuarios base de prueba para Semáforo (Las CURP deben ser de 18 caracteres)
+# 3. Usuarios base de prueba para Semáforo (Las CURP deben ser de 18 caracteres) Semaforo2026!
 USUARIOS_PRUEBA_SEMAFORO = [
     {"curp": "DGRJRDNNA000000000", "nombre": "Usuario", "apellido": "DGRJRDNNA", "grupo": "SEMAFORO_DGRJRDNNA"},
     {"curp": "DGRCAS000000000000", "nombre": "Usuario", "apellido": "DGRCAS", "grupo": "SEMAFORO_DGRCAS"},
