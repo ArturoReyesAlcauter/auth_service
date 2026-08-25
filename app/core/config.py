@@ -33,9 +33,9 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173/app/dashboard,"
         "http://127.0.0.1:5173/app/formato-nna,"
         "http://127.0.0.1:5173/app/usuarios,"
-        "http://127.0.0.1:5175/app/dashboard"
+        "http://127.0.0.1:5175/app/dashboard,"
+        "http://127.0.0.1:5180/app/dashboard"
     )
-
     REDIRECT_CODE_EXPIRE_SECONDS: int = 60
 
     # Configuración SMTP para envío de correos.

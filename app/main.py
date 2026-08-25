@@ -18,6 +18,9 @@ ORIGENES_PERMITIDOS = [
     "http://localhost:5175",
     "http://127.0.0.1:5175",
 
+    # Frontend Configuración
+    "http://127.0.0.1:5180",
+
     # Puertos comunes de frontend
     "http://localhost:3000",
     "http://127.0.0.1:3000",
