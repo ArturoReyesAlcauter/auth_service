@@ -26,3 +26,5 @@ htmlcov/
 Thumbs.db
 
 Instrucciones API MP.txt
+# Ejemplo versionado de callbacks SSO autorizados
+!.env.redirects.example

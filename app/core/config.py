@@ -10,7 +10,7 @@ class Settings(BaseSettings):
         extra="forbid",
     )
 
-    PROJECT_NAME: str = (
+    PROJECT_NAME: str = (       
         "API Central de Autenticación y Autorización"
     )
     VERSION: str = "1.0.0"
@@ -34,10 +34,12 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5173/app/formato-nna,"
         "http://127.0.0.1:5173/app/usuarios,"
         "http://127.0.0.1:5175/app/dashboard,"
+        "http://127.0.0.1:5177/procuradores,"
+        "http://127.0.0.1:5179/app/dashboard,"
         "http://127.0.0.1:5180/app/dashboard"
     )
-    REDIRECT_CODE_EXPIRE_SECONDS: int = 60
 
+    REDIRECT_CODE_EXPIRE_SECONDS: int = 60
     # Configuración SMTP para envío de correos.
     SMTP_HOST: str = "sandbox.smtp.mailtrap.io"
     SMTP_PORT: int = 2525

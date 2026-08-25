@@ -8,24 +8,26 @@ from app.api.routes import auth, users
 from app.core.errors import http_exception_handler, validation_exception_handler
 
 ORIGENES_PERMITIDOS = [
-    # Frontend Vite local
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 
-    # Puertos alternos de Vite si cambia automáticamente
     "http://localhost:5174",
     "http://127.0.0.1:5174",
+
     "http://localhost:5175",
     "http://127.0.0.1:5175",
 
-    # Frontend Configuración
+    # Directorio de Procuradores
+    "http://127.0.0.1:5177",
+
+    # Control Agenda Nacional
+    "http://127.0.0.1:5179",
+
+    # Configuración
     "http://127.0.0.1:5180",
 
-    # Puertos comunes de frontend
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-
-    # Backend / Swagger local
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:8001",
