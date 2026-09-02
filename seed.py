@@ -36,6 +36,7 @@ GRUPOS_LEGACY = ["MP", "MH", "VF", "RNCAS"]
 
 GRUPO_MESA_AYUDA = "MESA_AYUDA"
 GRUPO_FORMATOS_ATENCIONES = "FORMATOS_ATENCIONES"
+GRUPO_CRONOS = "CRONOS"
 GRUPOS_SEMAFORO = {
     "SEMAFORO_ADMIN": "Administración y Supervisión Global del Semáforo",
     "SEMAFORO_DGRJRDNNA": "Dirección General de Regulación, Jurisdicción y Restitución de Derechos de NNA",
@@ -149,6 +150,170 @@ ACCIONES_ADMINISTRACION_PERMISOS = {
     "CREAR_ACCION": "Permite crear acciones dentro de un módulo.",
     "ACTUALIZAR_ACCION": "Permite actualizar acciones.",
     "ELIMINAR_ACCION": "Permite eliminar acciones.",
+}
+
+ACCIONES_CRONOS_PERSONAL_ORGANIZACION = {
+    "VER_PERSONAL": (
+        "Permite consultar el personal registrado en CRONOS."
+    ),
+    "CREAR_PERSONAL": (
+        "Permite registrar personal y vincularlo con una identidad "
+        "existente en auth_service."
+    ),
+    "ACTUALIZAR_PERSONAL": (
+        "Permite actualizar la información laboral y organizacional "
+        "del personal."
+    ),
+    "GESTIONAR_BAJA_PERSONAL": (
+        "Permite registrar y administrar la baja institucional "
+        "del personal conservando su historial."
+    ),
+    "GESTIONAR_UNIDADES": (
+        "Permite crear, actualizar y administrar unidades "
+        "organizacionales."
+    ),
+    "GESTIONAR_PUESTOS": (
+        "Permite crear, actualizar y administrar puestos."
+    ),
+    "GESTIONAR_EQUIPOS": (
+        "Permite crear, actualizar y administrar equipos de trabajo."
+    ),
+    "ASIGNAR_EQUIPO": (
+        "Permite asignar personal a uno o varios equipos de trabajo."
+    ),
+    "ASIGNAR_SUPERVISOR": (
+        "Permite establecer o modificar la relación de supervisión "
+        "del personal."
+    ),
+    "VER_ORGANIGRAMA": (
+        "Permite consultar la estructura y el organigrama "
+        "organizacional de CRONOS."
+    ),
+}
+ACCIONES_CRONOS_JORNADAS_SEDES = {
+    "VER_JORNADAS": (
+        "Permite consultar jornadas, horarios y esquemas asignados "
+        "al personal."
+    ),
+    "GESTIONAR_ESQUEMAS_JORNADA": (
+        "Permite crear, actualizar y administrar esquemas "
+        "de jornada laboral."
+    ),
+    "ASIGNAR_JORNADAS": (
+        "Permite asignar esquemas de jornada al personal "
+        "y administrar su vigencia."
+    ),
+    "GESTIONAR_EXCEPCIONES_JORNADA": (
+        "Permite registrar y administrar excepciones temporales "
+        "a la jornada habitual del personal."
+    ),
+    "GESTIONAR_SEDES": (
+        "Permite crear, actualizar y administrar las sedes "
+        "de trabajo y sus parámetros de geolocalización."
+    ),
+}
+ACCIONES_CRONOS_ASISTENCIA = {
+    "REGISTRAR_ASISTENCIA": (
+        "Permite registrar entradas y salidas utilizando los mecanismos "
+        "de validación definidos por CRONOS."
+    ),
+    "VER_MI_ASISTENCIA": (
+        "Permite consultar el historial propio de entradas, salidas, "
+        "retardos y estado de puntualidad."
+    ),
+    "VER_ASISTENCIA_PERSONAL": (
+        "Permite consultar la asistencia del personal dentro del alcance "
+        "organizacional autorizado."
+    ),
+    "VER_ASISTENCIA_GLOBAL": (
+        "Permite consultar la asistencia del personal de toda la "
+        "organización."
+    ),
+    "AJUSTAR_ASISTENCIA": (
+        "Permite realizar correcciones administrativas justificadas "
+        "sobre registros de asistencia conservando su trazabilidad."
+    ),
+}
+ACCIONES_CRONOS_VACACIONES_PERMISOS = {
+    "SOLICITAR_VACACIONES": (
+        "Permite al personal registrar solicitudes de vacaciones "
+        "conforme a su disponibilidad y periodo correspondiente."
+    ),
+    "VER_MIS_VACACIONES": (
+        "Permite consultar las solicitudes, periodos y estado "
+        "de vacaciones propias."
+    ),
+    "VER_VACACIONES_PERSONAL": (
+        "Permite consultar las vacaciones del personal dentro "
+        "del alcance organizacional autorizado."
+    ),
+    "AUTORIZAR_VACACIONES": (
+        "Permite aprobar, rechazar o gestionar solicitudes "
+        "de vacaciones del personal autorizado."
+    ),
+    "GESTIONAR_SALDOS_VACACIONES": (
+        "Permite administrar los saldos y días disponibles "
+        "de vacaciones del personal."
+    ),
+    "SOLICITAR_PERMISO": (
+        "Permite registrar solicitudes de permiso o ausencia "
+        "con la justificación correspondiente."
+    ),
+    "VER_MIS_PERMISOS": (
+        "Permite consultar las solicitudes de permiso propias "
+        "y su estado."
+    ),
+    "VER_PERMISOS_PERSONAL": (
+        "Permite consultar las solicitudes de permiso del personal "
+        "dentro del alcance organizacional autorizado."
+    ),
+    "AUTORIZAR_PERMISOS": (
+        "Permite aprobar, rechazar o gestionar solicitudes "
+        "de permiso del personal autorizado."
+    ),
+    "GESTIONAR_DESCANSOS": (
+        "Permite administrar días de descanso, compensaciones "
+        "y sus periodos de vigencia."
+    ),
+}
+ACCIONES_CRONOS_EVIDENCIAS = {
+    "SUBIR_EVIDENCIA": (
+        "Permite adjuntar evidencias relacionadas con asistencia, "
+        "jornadas, permisos u otros procesos autorizados en CRONOS."
+    ),
+    "VER_MIS_EVIDENCIAS": (
+        "Permite consultar las evidencias propias registradas "
+        "en CRONOS."
+    ),
+    "VER_EVIDENCIAS_PERSONAL": (
+        "Permite consultar las evidencias del personal dentro "
+        "del alcance organizacional autorizado."
+    ),
+    "VALIDAR_EVIDENCIAS": (
+        "Permite revisar y validar administrativamente evidencias "
+        "conservando su archivo original y la trazabilidad "
+        "del proceso de verificación."
+    ),
+}
+ACCIONES_CRONOS_AUDITORIA = {
+    "VER_BITACORA_AUDITORIA": (
+        "Permite consultar la bitácora de auditoría de CRONOS "
+        "para revisar acciones administrativas, cambios y trazabilidad."
+    ),
+}
+ACCIONES_CRONOS_REPORTES = {
+    "VER_DASHBOARD_CRONOS": (
+        "Permite consultar indicadores generales de personal, "
+        "jornadas, asistencia, vacaciones y permisos en CRONOS."
+    ),
+    "GENERAR_REPORTES_CRONOS": (
+        "Permite generar reportes administrativos de información "
+        "laboral y operativa registrada en CRONOS."
+    ),
+    "EXPORTAR_DATOS_CRONOS": (
+        "Permite exportar información autorizada de CRONOS "
+        "para análisis y seguimiento institucional."
+    ),
 }
 
 
@@ -473,6 +638,16 @@ async def main() -> None:
             ),
         )
         permisos_modificados = permisos_modificados or creado
+        
+        grupo_cronos, creado = await asegurar_grupo(
+            GRUPO_CRONOS,
+            (
+                "Plataforma Integral de Gestión de Jornada y Personal "
+                "para la administración de personal, estructura organizacional, "
+                "jornadas, asistencia, vacaciones, permisos y procesos relacionados."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
 
         # ==========================================
         # 4. MÓDULOS DE MESA DE AYUDA
@@ -611,6 +786,128 @@ async def main() -> None:
             ACCIONES_REPORTES_FORMATOS,
         )
         permisos_modificados = permisos_modificados or cambios
+        
+          
+        
+        
+        # ==========================================
+        # 5.5. MÓDULOS DE CRONOS
+        # ==========================================
+
+        modulo_cronos_personal, creado = await asegurar_modulo(
+            grupo_cronos,
+            "PERSONAL_ORGANIZACION",
+            (
+                "Gestión del personal, estructura organizacional, "
+                "puestos, equipos de trabajo, supervisión y organigrama."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_personal, cambios = await asegurar_acciones(
+            modulo_cronos_personal,
+            ACCIONES_CRONOS_PERSONAL_ORGANIZACION,
+        )
+        permisos_modificados = permisos_modificados or cambios
+
+
+        modulo_cronos_jornadas, creado = await asegurar_modulo(
+            grupo_cronos,
+            "JORNADAS_SEDES",
+            (
+                "Gestión de jornadas laborales, esquemas de horario, "
+                "asignaciones, excepciones y sedes de trabajo."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_jornadas, cambios = await asegurar_acciones(
+            modulo_cronos_jornadas,
+            ACCIONES_CRONOS_JORNADAS_SEDES,
+        )
+        permisos_modificados = permisos_modificados or cambios
+        
+        modulo_cronos_asistencia, creado = await asegurar_modulo(
+            grupo_cronos,
+            "ASISTENCIA",
+            (
+                "Gestión de registros de entrada y salida, puntualidad, "
+                "retardos, geolocalización y seguimiento de asistencia."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_asistencia, cambios = await asegurar_acciones(
+            modulo_cronos_asistencia,
+            ACCIONES_CRONOS_ASISTENCIA,
+        )
+        permisos_modificados = permisos_modificados or cambios
+        
+        modulo_cronos_vacaciones, creado = await asegurar_modulo(
+            grupo_cronos,
+            "VACACIONES_PERMISOS",
+            (
+                "Gestión de vacaciones, permisos, descansos, saldos, "
+                "solicitudes y autorizaciones del personal."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_vacaciones, cambios = await asegurar_acciones(
+            modulo_cronos_vacaciones,
+            ACCIONES_CRONOS_VACACIONES_PERMISOS,
+        )
+        permisos_modificados = permisos_modificados or cambios
+        
+        modulo_cronos_evidencias, creado = await asegurar_modulo(
+            grupo_cronos,
+            "EVIDENCIAS",
+            (
+                "Gestión de evidencias asociadas con asistencia, jornadas, "
+                "permisos y otros procesos de CRONOS."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_evidencias, cambios = await asegurar_acciones(
+            modulo_cronos_evidencias,
+            ACCIONES_CRONOS_EVIDENCIAS,
+        )
+        permisos_modificados = permisos_modificados or cambios
+        
+        
+        modulo_cronos_auditoria, creado = await asegurar_modulo(
+            grupo_cronos,
+            "AUDITORIA",
+            (
+                "Consulta de la bitácora de auditoría y trazabilidad "
+                "de acciones administrativas realizadas en CRONOS."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_auditoria, cambios = await asegurar_acciones(
+            modulo_cronos_auditoria,
+            ACCIONES_CRONOS_AUDITORIA,
+        )
+        permisos_modificados = permisos_modificados or cambios
+        
+        modulo_cronos_reportes, creado = await asegurar_modulo(
+            grupo_cronos,
+            "REPORTES",
+            (
+                "Consulta de indicadores, generación de reportes "
+                "y exportación autorizada de información de CRONOS."
+            ),
+        )
+        permisos_modificados = permisos_modificados or creado
+
+        acciones_cronos_reportes, cambios = await asegurar_acciones(
+            modulo_cronos_reportes,
+            ACCIONES_CRONOS_REPORTES,
+        )
+        permisos_modificados = permisos_modificados or cambios
+    
 
         # ==========================================
         # 6. CATÁLOGO VIGENTE
@@ -619,6 +916,7 @@ async def main() -> None:
         grupos_actuales = [
             grupo_mesa_ayuda,
             grupo_formatos_atenciones,
+            grupo_cronos,
         ]
 
         modulos_mesa_ayuda = [
@@ -635,9 +933,30 @@ async def main() -> None:
             modulo_reportes_formatos,
         ]
 
+        modulos_cronos = [
+            modulo_cronos_personal,
+            modulo_cronos_jornadas,
+            modulo_cronos_asistencia,
+            modulo_cronos_vacaciones,
+            modulo_cronos_evidencias,
+            modulo_cronos_auditoria,
+            modulo_cronos_reportes,
+        ]
+
         modulos_actuales = [
             *modulos_mesa_ayuda,
             *modulos_formatos_atenciones,
+            *modulos_cronos,
+        ]
+
+        acciones_cronos = [
+            *acciones_cronos_personal,
+            *acciones_cronos_jornadas,
+            *acciones_cronos_asistencia,
+            *acciones_cronos_vacaciones,
+            *acciones_cronos_evidencias,
+            *acciones_cronos_auditoria,
+            *acciones_cronos_reportes,
         ]
 
         acciones_actuales = [
@@ -649,6 +968,7 @@ async def main() -> None:
             *acciones_gestion_formatos,
             *acciones_dashboard_formatos,
             *acciones_reportes_formatos,
+            *acciones_cronos,
         ]
 
         # El seed es la fuente de verdad para los módulos de ambos grupos.
@@ -669,12 +989,24 @@ async def main() -> None:
                 for modulo in modulos_formatos_atenciones
             ]
         ).delete()
+        
+        
+        modulos_eliminados_cronos = await Modulo.filter(
+            grupo=grupo_cronos
+        ).exclude(
+            id__in=[
+                modulo.id
+                for modulo in modulos_cronos
+            ]
+        ).delete()
+        
 
         permisos_modificados = permisos_modificados or any(
             cantidad > 0
             for cantidad in [
                 modulos_eliminados_mesa,
                 modulos_eliminados_formatos,
+                modulos_eliminados_cronos,
             ]
         )
 
