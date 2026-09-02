@@ -454,6 +454,108 @@ USUARIOS_PRUEBA_SEMAFORO = [
     {"curp": "DGCP00000000000000", "nombre": "Usuario", "apellido": "DGCP", "grupo": "SEMAFORO_DGCP"},
 ]
 
+
+USUARIOS_PRUEBA_CRONOS = [
+    {
+        "curp": "CRONOS000000000001",
+        "nombre": "Oliver",
+        "primer_apellido": "Castañeda",
+        "segundo_apellido": "Correa",
+        "correo": "oliver.castaneda.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000002",
+        "nombre": "Raúl Alberto",
+        "primer_apellido": "Cantú",
+        "segundo_apellido": "Martínez",
+        "correo": "raul.cantu.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000003",
+        "nombre": "Carlos",
+        "primer_apellido": "Reyes",
+        "segundo_apellido": "Ramírez",
+        "correo": "carlos.reyes.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000004",
+        "nombre": "Danton",
+        "primer_apellido": "Bazaldua",
+        "segundo_apellido": "Camarena",
+        "correo": "danton.bazaldua.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000005",
+        "nombre": "Paulina",
+        "primer_apellido": "Martínez",
+        "segundo_apellido": "Pérez",
+        "correo": "paulina.martinez.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000006",
+        "nombre": "Atenas",
+        "primer_apellido": "Román",
+        "segundo_apellido": "Fuentes",
+        "correo": "atenas.roman.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000007",
+        "nombre": "Alma",
+        "primer_apellido": "Sandoval",
+        "segundo_apellido": "Mancilla",
+        "correo": "alma.sandoval.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000008",
+        "nombre": "Julio",
+        "primer_apellido": "Sánchez",
+        "segundo_apellido": "López",
+        "correo": "julio.sanchez.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000009",
+        "nombre": "Arturo",
+        "primer_apellido": "Reyes",
+        "segundo_apellido": "Alcauter",
+        "correo": "arturo.reyes.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000010",
+        "nombre": "Brandon De Jesús",
+        "primer_apellido": "Monroy",
+        "segundo_apellido": None,
+        "correo": "brandon.monroy.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000011",
+        "nombre": "Javier Alfonso",
+        "primer_apellido": "Hernández",
+        "segundo_apellido": "Briones",
+        "correo": "javier.hernandez.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000012",
+        "nombre": "Francisco G.",
+        "primer_apellido": "Cortés",
+        "segundo_apellido": None,
+        "correo": "francisco.cortes.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000013",
+        "nombre": "Gustavo G.",
+        "primer_apellido": "Morales",
+        "segundo_apellido": None,
+        "correo": "gustavo.morales.cronos@example.com",
+    },
+    {
+        "curp": "CRONOS000000000014",
+        "nombre": "Mauricio L.",
+        "primer_apellido": "Pérez",
+        "segundo_apellido": None,
+        "correo": "mauricio.perez.cronos@example.com",
+    },
+]
+
 async def asegurar_estatus_usuario(
     id_estatus: int,
     nombre: str,
@@ -1194,6 +1296,55 @@ async def main() -> None:
             ).update(
                 token_version=F("token_version") + 1
             )
+            
+            
+            
+        # ==========================================
+        # 8.4. USUARIOS DE PRUEBA DE CRONOS
+        # ==========================================
+
+        print("\nSincronizando usuarios de prueba para CRONOS...")
+
+        contrasena_cronos = get_password_hash(
+            settings.CRONOS_TEST_PASSWORD
+        )
+
+        for u_data in USUARIOS_PRUEBA_CRONOS:
+            usuario_cronos = await User.get_or_none(
+                curp=u_data["curp"]
+            )
+
+            if usuario_cronos is None:
+                usuario_cronos = await User.create(
+                    curp=u_data["curp"],
+                    nombre=u_data["nombre"],
+                    primer_apellido=u_data["primer_apellido"],
+                    segundo_apellido=u_data["segundo_apellido"],
+                    correo_electronico=u_data["correo"],
+                    entidad_federativa_id=9,
+                    numero_telefono=None,
+                    contrasena_hasheada=contrasena_cronos,
+                    is_2fa_enabled=False,
+                    totp_secret=None,
+                    creado_por=admin.id,
+                    estatus=estatus_activo,
+                    instancia=instancia_sndif,
+                    intentos_login=0,
+                )
+
+                print(
+                    f"- Usuario CRONOS creado: "
+                    f"{usuario_cronos.nombre} "
+                    f"{usuario_cronos.primer_apellido}"
+                )
+
+            await UsuarioGrupo.get_or_create(
+                usuario=usuario_cronos,
+                grupo=grupo_cronos,
+            )
+            
+                    
+    
 
         # ==========================================
         # 8.5. CREACIÓN DE USUARIOS DE PRUEBA (SEMÁFORO)

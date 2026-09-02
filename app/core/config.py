@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
     ADMIN_INITIAL_PASSWORD: str
+    #para los usuarios ficticios que compondran el organigrama de cronos, de una vez se les asignara su usuario y contraseña y no quiero que sea el mismo para el usuario seed del super dios admin
+    CRONOS_TEST_PASSWORD: str
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
