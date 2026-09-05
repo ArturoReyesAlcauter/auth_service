@@ -32,6 +32,19 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+class AccessTokenResponse(BaseModel):
+    """
+    Respuesta del nuevo contrato de autenticación.
+
+    El access token se entrega al frontend mediante JSON.
+    El refresh token se administra mediante una cookie HttpOnly
+    y no se expone a JavaScript.
+    """
+
+    access_token: str
+    token_type: str = "bearer"
+
+
 class TokenPayload(BaseModel):
     """Contenido básico almacenado dentro de un JWT."""
 

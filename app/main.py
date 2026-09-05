@@ -7,31 +7,7 @@ from app.core.config import settings, TORTOISE_ORM
 from app.api.routes import auth, users
 from app.core.errors import http_exception_handler, validation_exception_handler
 
-ORIGENES_PERMITIDOS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
 
-    "http://localhost:5174",
-    "http://127.0.0.1:5174",
-
-    "http://localhost:5175",
-    "http://127.0.0.1:5175",
-
-    # Directorio de Procuradores
-    "http://127.0.0.1:5177",
-
-    # Control Agenda Nacional
-    "http://127.0.0.1:5179",
-
-    # Configuración
-    "http://127.0.0.1:5180",
-
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://127.0.0.1:8001",
-]
 
 app = FastAPI(
     title="Auth Service",
@@ -41,7 +17,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ORIGENES_PERMITIDOS,
+    allow_origins=settings.CORS_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

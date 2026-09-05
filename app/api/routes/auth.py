@@ -19,8 +19,10 @@ from app.core.security import (
     create_temp_token,
     decode_access_token,
 )
+
 from app.models.user import TokenUsuario, User, UsuarioAccion
 from app.schemas.token import (
+    AccessTokenResponse,
     ExchangeCodeRequest,
     RedirectCodeRequest,
     RedirectCodeResponse,
@@ -39,6 +41,129 @@ from app.services.session_service import validar_ultima_sesion_o_revocar
 
 
 router = APIRouter(tags=["Autenticación"])
+
+
+def establecer_refresh_cookie(
+    response: Response,
+    refresh_token: str,
+    recordar_sesion: bool = False,
+) -> None:
+    """
+    Guarda el refresh token en una cookie HttpOnly.
+
+    Si recordar_sesion es False, se crea una cookie de sesión.
+    Si es True, la cookie persiste durante la vigencia máxima
+    configurada para el refresh token.
+    """
+
+    max_age = None
+
+    if recordar_sesion:
+        max_age = (
+            settings.REFRESH_TOKEN_EXPIRE_DAYS
+            * 24
+            * 60
+            * 60
+        )
+
+    response.set_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+        path=settings.REFRESH_COOKIE_PATH,
+        domain=settings.REFRESH_COOKIE_DOMAIN,
+    )
+
+
+def eliminar_refresh_cookie(
+    response: Response,
+) -> None:
+    """
+    Elimina la cookie que contiene el refresh token.
+    """
+
+    response.delete_cookie(
+        key=settings.REFRESH_COOKIE_NAME,
+        path=settings.REFRESH_COOKIE_PATH,
+        domain=settings.REFRESH_COOKIE_DOMAIN,
+        secure=settings.REFRESH_COOKIE_SECURE,
+        httponly=True,
+        samesite=settings.REFRESH_COOKIE_SAMESITE,
+    )
+
+
+
+
+def obtener_recordar_sesion(
+    request: Request,
+) -> bool:
+    """
+    Obtiene la preferencia de persistencia enviada por el frontend.
+
+    X-Remember-Session: true  -> sesión persistente
+    X-Remember-Session: false -> cookie de sesión
+    """
+
+    valor = request.headers.get(
+        "X-Remember-Session",
+        "false",
+    )
+
+    return valor.strip().lower() == "true"
+
+
+
+def validar_origen_cookie(
+    request: Request,
+) -> None:
+    """
+    Protege los endpoints que utilizan el refresh token
+    desde una cookie HttpOnly.
+
+    La validación solamente se aplica cuando existe
+    la cookie de refresh. Esto permite mantener
+    temporalmente clientes legacy que todavía envían
+    el refresh token mediante JSON.
+    """
+
+    refresh_cookie = request.cookies.get(
+        settings.REFRESH_COOKIE_NAME,
+    )
+
+    # Si no viene cookie, puede tratarse de un cliente
+    # legacy que aún utiliza refresh_token mediante JSON.
+    if not refresh_cookie:
+        return
+
+    origin = request.headers.get("Origin")
+
+    if not origin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ORIGIN_REQUIRED",
+                "detail": (
+                    "La solicitud con credenciales requiere "
+                    "un origen válido."
+                ),
+            },
+        )
+
+    if origin not in settings.CORS_ALLOWED_ORIGINS:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "ORIGIN_NOT_ALLOWED",
+                "detail": (
+                    "El origen de la solicitud no está autorizado."
+                ),
+            },
+        )
+
+
 
 
 # --- FUNCIONES DE APOYO ---
@@ -68,10 +193,27 @@ async def generar_payload_usuario(user: User) -> dict:
     }
 
 
-async def emitir_tokens_usuario(user: User) -> Token:
-    """Genera access_token + refresh_token, guardando el refresh token en DB."""
+async def emitir_tokens_usuario(
+    user: User,
+    response: Response | None = None,
+    recordar_sesion: bool = False,
+    exponer_refresh: bool = True,
+) -> Token | AccessTokenResponse:
+    """
+    Genera access_token + refresh_token y guarda el refresh token en DB.
+
+    Si se proporciona response, el refresh token también se establece
+    como cookie HttpOnly.
+
+    exponer_refresh=True mantiene temporalmente el contrato legacy.
+    exponer_refresh=False devuelve únicamente el access token en JSON.
+    """
+
     payload = await generar_payload_usuario(user)
-    access_token = create_access_token(data=payload)
+
+    access_token = create_access_token(
+        data=payload,
+    )
 
     refresh_token_str, expire_dt = create_refresh_token(
         {
@@ -87,9 +229,22 @@ async def emitir_tokens_usuario(user: User) -> Token:
         expire_dt,
     )
 
-    return Token(
+    if response is not None:
+        establecer_refresh_cookie(
+            response=response,
+            refresh_token=refresh_token_str,
+            recordar_sesion=recordar_sesion,
+        )
+
+    if exponer_refresh:
+        return Token(
+            access_token=access_token,
+            refresh_token=refresh_token_str,
+            token_type="bearer",
+        )
+
+    return AccessTokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token_str,
         token_type="bearer",
     )
 
@@ -264,9 +419,13 @@ async def login_access_token(
 
 # --- 2. LOGIN PASO 2: Validar el código 2FA ---
 
-@router.post("/login/2fa", response_model=Token)
+@router.post(
+    "/login/2fa",
+    response_model=AccessTokenResponse,
+)
 async def login_verify_2fa(
     request: Request,
+    response: Response,
     data: TempTokenVerifyRequest,
 ):
     """Verifica el código TOTP y entrega tokens de sesión."""
@@ -296,7 +455,16 @@ async def login_verify_2fa(
             detail={"code": "TWO_FACTOR_CODE_INVALID", "detail": "Código de verificación incorrecto."},
         )
 
-    return await emitir_tokens_usuario(user)
+    recordar_sesion = obtener_recordar_sesion(
+    request,
+        )
+
+    return await emitir_tokens_usuario(
+        user=user,
+        response=response,
+        recordar_sesion=recordar_sesion,
+        exponer_refresh=False,
+    )
 
 
 # --- RUTAS DE CONFIGURACIÓN 2FA ---
@@ -379,10 +547,11 @@ async def setup_2fa(
 
 @router.post(
     "/enable",
-    response_model=Token,
+    response_model=AccessTokenResponse,
 )
 async def enable_2fa(
     request: Request,
+    response: Response,
     data: TempTokenVerifyRequest,
 ):
     """
@@ -467,79 +636,218 @@ async def enable_2fa(
 
     # Los tokens definitivos se crean usando
     # la nueva versión del usuario.
-    return await emitir_tokens_usuario(user)
+    recordar_sesion = obtener_recordar_sesion(
+    request,
+)
+
+    return await emitir_tokens_usuario(
+        user=user,
+        response=response,
+        recordar_sesion=recordar_sesion,
+        exponer_refresh=False,
+    )
 
 
 # --- ROTACIÓN DE REFRESH TOKEN ---
+@router.post(
+    "/refresh",
+    response_model=AccessTokenResponse,
+)
+async def refresh_access_token(
+    request: Request,
+    response: Response,
+    data: RefreshTokenRequest | None = None,
+):
+    """
+    Rota un refresh token válido y genera una nueva sesión renovada.
 
-@router.post("/refresh", response_model=Token)
-async def refresh_access_token(data: RefreshTokenRequest):
+    Durante la etapa de migración:
+    - se utiliza prioritariamente la cookie HttpOnly;
+    - si no existe cookie, se acepta temporalmente el body JSON legacy.
     """
-    Recibe un refresh_token válido, lo revoca (rotación) y devuelve
-    un nuevo Access Token y un nuevo Refresh Token.
-    """
+
+    validar_origen_cookie(
+        request,
+    )
+    refresh_token = request.cookies.get(
+        settings.REFRESH_COOKIE_NAME,
+    )
+
+    # Compatibilidad temporal con frontends legacy.
+    if not refresh_token and data is not None:
+        refresh_token = data.refresh_token
+
+    if not refresh_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REFRESH_TOKEN_MISSING",
+                "detail": "No existe una sesión renovable.",
+            },
+        )
 
     try:
-        payload = decode_access_token(data.refresh_token)
+        payload = decode_access_token(
+            refresh_token,
+        )
+
         user_id = payload.get("sub")
 
-        if not user_id or payload.get("type") != "refresh":
+        if (
+            not user_id
+            or payload.get("type") != "refresh"
+        ):
             raise ValueError()
 
     except Exception:
+        eliminar_refresh_cookie(
+            response,
+        )
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "REFRESH_TOKEN_INVALID", "detail": "Refresh token inválido o expirado."},
+            detail={
+                "code": "REFRESH_TOKEN_INVALID",
+                "detail": (
+                    "El refresh token es inválido "
+                    "o ha expirado."
+                ),
+            },
         )
 
     token_db = await TokenUsuario.get_or_none(
-        token=data.refresh_token,
+        token=refresh_token,
         tipo="REFRESH_TOKEN",
     )
 
     if not token_db:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "SESSION_REVOKED", "detail": "Sesión revocada o inexistente."},
+        eliminar_refresh_cookie(
+            response,
         )
 
-    user = await User.get_or_none(id=user_id).prefetch_related(
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REFRESH_TOKEN_REVOKED",
+                "detail": (
+                    "La sesión fue revocada "
+                    "o ya no existe."
+                ),
+            },
+        )
+
+    user = await User.get_or_none(
+        id=user_id,
+    ).prefetch_related(
         "estatus",
         "instancia",
     )
 
     if not user or not usuario_esta_activo(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "USER_INACTIVE", "detail": "Usuario inactivo o suspendido."},
+        await token_db.delete()
+
+        eliminar_refresh_cookie(
+            response,
         )
 
-    payload_token_version = payload.get("token_version")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "USER_INACTIVE",
+                "detail": (
+                    "Usuario inactivo o suspendido."
+                ),
+            },
+        )
+
+    payload_token_version = payload.get(
+        "token_version",
+    )
 
     if payload_token_version != user.token_version:
         await token_db.delete()
 
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"code": "SESSION_REVOKED", "detail": "Sesión revocada. Inicia sesión nuevamente."},
+        eliminar_refresh_cookie(
+            response,
         )
 
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "REFRESH_TOKEN_REVOKED",
+                "detail": (
+                    "La sesión fue revocada. "
+                    "Inicia sesión nuevamente."
+                ),
+            },
+        )
+
+    # El refresh actual queda inutilizable.
     await token_db.delete()
-    return await emitir_tokens_usuario(user)
 
-
-# --- CERRAR SESIÓN ---
-
-@router.post("/logout", status_code=status.HTTP_200_OK)
-async def logout(data: RefreshTokenRequest):
-    """
-    Cierra sesión eliminando el refresh_token en la base de datos.
-    """
-
-    return await auth_service.cerrar_sesion(
-        refresh_token=data.refresh_token,
+    recordar_sesion = obtener_recordar_sesion(
+        request,
     )
 
+    # Se genera un nuevo refresh y se actualiza
+    # automáticamente la cookie HttpOnly.
+    return await emitir_tokens_usuario(
+        user=user,
+        response=response,
+        recordar_sesion=recordar_sesion,
+        exponer_refresh=False,
+    )
+
+# --- CERRAR SESIÓN ---
+@router.post(
+    "/logout",
+    status_code=status.HTTP_200_OK,
+)
+async def logout(
+    request: Request,
+    response: Response,
+    data: RefreshTokenRequest | None = None,
+):
+    """
+    Cierra la sesión actual.
+
+    Durante la etapa de migración:
+    - utiliza prioritariamente el refresh token de la cookie HttpOnly;
+    - acepta temporalmente el refresh token enviado por JSON;
+    - elimina siempre la cookie del navegador.
+
+    El logout permanece idempotente.
+    """
+
+    validar_origen_cookie(
+        request,
+    )
+
+    refresh_token = request.cookies.get(
+        settings.REFRESH_COOKIE_NAME,
+    )
+
+    # Compatibilidad temporal con frontends legacy.
+    if not refresh_token and data is not None:
+        refresh_token = data.refresh_token
+
+    # La cookie se elimina aunque el token ya no exista,
+    # esté revocado o el navegador tenga una cookie obsoleta.
+    eliminar_refresh_cookie(
+        response,
+    )
+
+    # Logout idempotente:
+    # si no existe ningún refresh token, igualmente
+    # consideramos que la sesión está cerrada.
+    if not refresh_token:
+        return {
+            "message": "Sesión cerrada correctamente.",
+        }
+
+    return await auth_service.cerrar_sesion(
+        refresh_token=refresh_token,
+    )
 
 # --- RESTABLECER CONTRASEÑA CON TOKEN ENVIADO POR ADMIN ---
 
@@ -578,11 +886,33 @@ async def crear_redirect_code(
     )
 
 
-@router.post("/exchange-code", response_model=Token)
-async def exchange_redirect_code(data: ExchangeCodeRequest):
+@router.post("/exchange-code", response_model=AccessTokenResponse)
+async def exchange_redirect_code(
+    request: Request,
+    response: Response,
+    data: ExchangeCodeRequest,
+):
     """
     Intercambia un código temporal de redirección por tokens de sesión.
+
     El código queda invalidado al primer uso.
+
+    Durante la etapa de migración:
+    - el refresh token continúa en el JSON por compatibilidad;
+    - también se establece como cookie HttpOnly.
     """
-    user = await auth_service.consumir_redirect_code(data.code)
-    return await emitir_tokens_usuario(user)
+
+    user = await auth_service.consumir_redirect_code(
+        data.code,
+    )
+
+    recordar_sesion = obtener_recordar_sesion(
+        request,
+    )
+
+    return await emitir_tokens_usuario(
+        user=user,
+        response=response,
+        recordar_sesion=recordar_sesion,
+        exponer_refresh=False,
+    )

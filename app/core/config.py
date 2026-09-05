@@ -26,6 +26,28 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
+
+    # ==========================================
+    # COOKIE SEGURA PARA REFRESH TOKEN
+    # ==========================================
+
+    # Nombre único de la cookie utilizada por auth_service.
+    REFRESH_COOKIE_NAME: str = "dgcp_refresh_token"
+
+    # En desarrollo local usamos HTTP, por lo que debe ser False.
+    # En producción con HTTPS deberá configurarse como True.
+    REFRESH_COOKIE_SECURE: bool = False
+
+    # Política SameSite inicial.
+    # "lax" funciona para nuestra arquitectura local actual.
+    REFRESH_COOKIE_SAMESITE: str = "lax"
+
+    # La cookie solamente será enviada a endpoints de autenticación.
+    REFRESH_COOKIE_PATH: str = "/auth"
+
+    # Se deja sin dominio explícito para crear una cookie host-only.
+    REFRESH_COOKIE_DOMAIN: str | None = None
+
     # Tiempo máximo de inactividad de una sesión.
     SESSION_IDLE_TIMEOUT_MINUTES: int = 60
 
@@ -40,6 +62,36 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5179/app/dashboard,"
         "http://127.0.0.1:5180/app/dashboard"
     )
+
+        # ==========================================
+    # ORÍGENES AUTORIZADOS PARA CORS / CSRF
+    # ==========================================
+
+    CORS_ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+
+        "http://localhost:5175",
+        "http://127.0.0.1:5175",
+
+        # Directorio de Procuradores
+        "http://127.0.0.1:5177",
+
+        # Control Agenda Nacional
+        "http://127.0.0.1:5179",
+
+        # Configuración
+        "http://127.0.0.1:5180",
+
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://127.0.0.1:8001",
+    ]
 
     REDIRECT_CODE_EXPIRE_SECONDS: int = 60
     # Configuración SMTP para envío de correos.
