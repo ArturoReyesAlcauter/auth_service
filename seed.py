@@ -26,7 +26,7 @@ ADMIN_CURP = "AURA000101HDFXXX01"
 ADMIN_PASSWORD = settings.ADMIN_INITIAL_PASSWORD
 ADMIN_EMAIL = "admin@portusderechos.gob.mx"
 ADMIN_ENTIDAD_FEDERATIVA_ID = 9
-
+SEMAFORO_PASSWORD = "Semaforo2026!"
 
 # ==========================================
 # CATÁLOGO ACTUAL DE SISTEMAS Y PERMISOS
@@ -37,7 +37,8 @@ GRUPOS_LEGACY = ["MP", "MH", "VF", "RNCAS"]
 GRUPO_MESA_AYUDA = "MESA_AYUDA"
 GRUPO_FORMATOS_ATENCIONES = "FORMATOS_ATENCIONES"
 GRUPO_CRONOS = "CRONOS"
-GRUPOS_SEMAFORO = {
+GRUPO_SEMAFORO = "SEMAFORO"
+MODULOS_SEMAFORO = {
     "SEMAFORO_ADMIN": "Administración y Supervisión Global del Semáforo",
     "SEMAFORO_DGRJRDNNA": "Dirección General de Regulación, Jurisdicción y Restitución de Derechos de NNA",
     "SEMAFORO_DGRCAS": "Dirección General de Representación Jurídica y Restitución de NNA",
@@ -448,10 +449,10 @@ ACCIONES_SEMAFORO_ADMIN = {
 
 # 3. Usuarios base de prueba para Semáforo (Las CURP deben ser de 18 caracteres) Semaforo2026!
 USUARIOS_PRUEBA_SEMAFORO = [
-    {"curp": "DGRJRDNNA000000000", "nombre": "Usuario", "apellido": "DGRJRDNNA", "grupo": "SEMAFORO_DGRJRDNNA"},
-    {"curp": "DGRCAS000000000000", "nombre": "Usuario", "apellido": "DGRCAS", "grupo": "SEMAFORO_DGRCAS"},
-    {"curp": "DGNPDDNNA000000000", "nombre": "Usuario", "apellido": "DGNPDDNNA", "grupo": "SEMAFORO_DGNPDDNNA"},
-    {"curp": "DGCP00000000000000", "nombre": "Usuario", "apellido": "DGCP", "grupo": "SEMAFORO_DGCP"},
+    {"curp": "DGRJRDNNA000000000", "nombre": "Usuario", "apellido": "DGRJRDNNA", "modulo": "SEMAFORO_DGRJRDNNA"},
+    {"curp": "DGRCAS000000000000", "nombre": "Usuario", "apellido": "DGRCAS", "modulo": "SEMAFORO_DGRCAS"},
+    {"curp": "DGNPDDNNA000000000", "nombre": "Usuario", "apellido": "DGNPDDNNA", "modulo": "SEMAFORO_DGNPDDNNA"},
+    {"curp": "DGCP00000000000000", "nombre": "Usuario", "apellido": "DGCP", "modulo": "SEMAFORO_DGCP"},
 ]
 
 
@@ -1116,57 +1117,34 @@ async def main() -> None:
         # X. MÓDULOS Y GRUPOS DE SEMÁFORO
         # ==========================================
         
-        grupos_semaforo_obj = []
-        
-        for nombre_grupo, desc_grupo in GRUPOS_SEMAFORO.items():
-            # 1. Asegurar la creación del grupo
-            grupo, creado = await asegurar_grupo(nombre_grupo, desc_grupo)
-            grupos_semaforo_obj.append(grupo)
+        # 1. Asegurar la creación del grupo único de Semáforo
+        grupo_semaforo, creado = await asegurar_grupo(
+            GRUPO_SEMAFORO, 
+            "Control Agenda Nacional (Semáforo)"
+        )
+        permisos_modificados = permisos_modificados or creado
+        grupos_actuales.append(grupo_semaforo)
+
+        # 2. Iterar sobre los módulos de Semáforo
+        for nombre_modulo, desc_modulo in MODULOS_SEMAFORO.items():
+            modulo, creado = await asegurar_modulo(grupo_semaforo, nombre_modulo, desc_modulo)
             permisos_modificados = permisos_modificados or creado
-            grupos_actuales.append(grupo) # Agregar a la lista global del seed
+            modulos_actuales.append(modulo)
 
-            # 2. Lógica ramificada: DGs normales vs Administrador
-            if nombre_grupo != "SEMAFORO_ADMIN":
-                # ---------------------------------------------------------
-                # RAMA A: Módulos estándar para las DGs (CRUD y Dashboard)
-                # ---------------------------------------------------------
-                
-                # A.1. Módulo de Gestión de Acciones
-                modulo_crud, creado = await asegurar_modulo(
-                    grupo, "GESTION_ACCIONES", "Gestión del CRUD de Semáforo"
-                )
-                permisos_modificados = permisos_modificados or creado
-                modulos_actuales.append(modulo_crud)
-
-                acciones_crud, cambios = await asegurar_acciones(modulo_crud, ACCIONES_SEMAFORO_CRUD)
+            if nombre_modulo != "ADMIN":
+                # RAMA A: Acciones para las DGs (CRUD y Dashboard)
+                acciones_crud, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_CRUD)
                 permisos_modificados = permisos_modificados or cambios
                 acciones_actuales.extend(acciones_crud)
 
-                # A.2. Módulo de Dashboard
-                modulo_dash, creado = await asegurar_modulo(
-                    grupo, "DASHBOARD_SEMAFORO", "Estadísticas del Semáforo"
-                )
-                permisos_modificados = permisos_modificados or creado
-                modulos_actuales.append(modulo_dash)
-
-                acciones_dash, cambios = await asegurar_acciones(modulo_dash, ACCIONES_SEMAFORO_DASHBOARD)
+                acciones_dash, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_DASHBOARD)
                 permisos_modificados = permisos_modificados or cambios
                 acciones_actuales.extend(acciones_dash)
-
             else:
-                # ---------------------------------------------------------
-                # RAMA B: Módulo exclusivo para el Grupo Administrador
-                # ---------------------------------------------------------
-                
-                modulo_admin, creado = await asegurar_modulo(
-                    grupo, "CONTROL_GLOBAL_SEMAFORO", "Supervisión total del Semáforo"
-                )
-                permisos_modificados = permisos_modificados or creado
-                modulos_actuales.append(modulo_admin) # ¡CRÍTICO! Para que no sea eliminado
-
-                acciones_admin, cambios = await asegurar_acciones(modulo_admin, ACCIONES_SEMAFORO_ADMIN)
+                # RAMA B: Acciones exclusivas para el Administrador
+                acciones_admin, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_ADMIN)
                 permisos_modificados = permisos_modificados or cambios
-                acciones_actuales.extend(acciones_admin) # ¡CRÍTICO! Para que no sean eliminadas
+                acciones_actuales.extend(acciones_admin)
                 
         # ==========================================
         # 7. USUARIO ADMIN PREDETERMINADO
@@ -1350,7 +1328,7 @@ async def main() -> None:
         # 8.5. CREACIÓN DE USUARIOS DE PRUEBA (SEMÁFORO)
         # ==========================================
         print("\nSincronizando usuarios de prueba para Semáforo...")
-        contrasena_test = get_password_hash("Semaforo2026!")
+        contrasena_test = get_password_hash(SEMAFORO_PASSWORD)
 
         for u_data in USUARIOS_PRUEBA_SEMAFORO:
             user_test = await User.get_or_none(curp=u_data["curp"])
@@ -1372,19 +1350,19 @@ async def main() -> None:
                 )
                 print(f"- Usuario creado: {u_data['curp']}")
             
-            # Buscar el grupo correspondiente
-            grupo_correspondiente = next(g for g in grupos_semaforo_obj if g.nombre == u_data["grupo"])
+            # Asignar el Grupo único de Semáforo al usuario
+            await UsuarioGrupo.get_or_create(usuario=user_test, grupo=grupo_semaforo)
             
-            # Asignar Grupo al usuario
-            await UsuarioGrupo.get_or_create(usuario=user_test, grupo=grupo_correspondiente)
+            # Asignar el módulo correspondiente y sus acciones
+            modulo_correspondiente = next(
+                m for m in modulos_actuales 
+                if m.nombre == u_data["modulo"] and m.grupo_id == grupo_semaforo.id
+            )
+            await UsuarioModulo.get_or_create(usuario=user_test, modulo=modulo_correspondiente)
             
-            # Asignar los módulos y acciones de ese grupo al usuario
-            modulos_del_grupo = await Modulo.filter(grupo=grupo_correspondiente)
-            for mod in modulos_del_grupo:
-                await UsuarioModulo.get_or_create(usuario=user_test, modulo=mod)
-                acciones_del_modulo = await Accion.filter(modulo=mod)
-                for acc in acciones_del_modulo:
-                    await UsuarioAccion.get_or_create(usuario=user_test, accion=acc)
+            acciones_del_modulo = await Accion.filter(modulo=modulo_correspondiente)
+            for acc in acciones_del_modulo:
+                await UsuarioAccion.get_or_create(usuario=user_test, accion=acc)
 
         # ==========================================
         # 9. RESULTADO DEL SEED
