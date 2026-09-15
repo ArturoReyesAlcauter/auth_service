@@ -94,8 +94,14 @@ def requiere_accion(nombre_accion: str) -> Callable:
         # Obtenemos la lista de acciones del payload. Si no existe, devuelve una lista vacía.
         acciones_usuario = payload.get("acciones", [])
 
-        # Validamos en memoria si la acción requerida está en la lista del token
-        if nombre_accion not in acciones_usuario:
+        # SUPER_ADMIN es una acción global. Si está presente, el usuario
+        # puede consumir cualquier endpoint administrativo protegido por acción.
+        # Los permisos funcionales de otros sistemas (por ejemplo, Semáforo)
+        # siguen requiriendo asignaciones explícitas en sus propios contratos.
+        if (
+            "SUPER_ADMIN" not in acciones_usuario
+            and nombre_accion not in acciones_usuario
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"No tienes permiso para ejecutar la acción: {nombre_accion}",

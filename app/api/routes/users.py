@@ -518,7 +518,7 @@ async def obtener_catalogo_permisos_por_grupo(
 async def cambiar_estatus_usuario(
     user_id: UUID,
     estatus_id: int,
-    current_user: User = Depends(requiere_accion("ACTUALIZAR_USUARIO")),
+    current_user: User = Depends(requiere_accion("DESACTIVAR_USUARIO")),
 ):
     """
     Cambia el estatus de un usuario usando el catálogo cat_estatus_usuarios.
@@ -527,7 +527,7 @@ async def cambiar_estatus_usuario(
     - SUPER_ADMIN / Dios puede cambiar el estatus de cualquier usuario.
     - Un administrador normal solo puede cambiar el estatus de usuarios que
       pertenezcan a sus grupos administrables.
-    - El administrador debe tener ACTUALIZAR_USUARIO.
+    - El administrador debe tener DESACTIVAR_USUARIO.
     - Si intenta cambiar el estatus de un usuario fuera de su alcance,
       el sistema responde 403.
 
@@ -538,7 +538,11 @@ async def cambiar_estatus_usuario(
     - Envía correo al usuario notificando el cambio de estatus.
 
     Permiso requerido:
-    - ACTUALIZAR_USUARIO
+    - DESACTIVAR_USUARIO
+
+    Protecciones SUPER_ADMIN:
+    - Nadie puede desactivarse a sí mismo mediante este endpoint.
+    - No se puede desactivar al último SUPER_ADMIN activo.
     """
     return await user_service.cambiar_estatus_usuario(
         user_id=user_id,
