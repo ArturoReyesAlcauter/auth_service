@@ -37,6 +37,13 @@ from app.services.session_service import (
     invalidar_sesiones_usuario,
 )
 
+from app.services.super_admin_guard import (
+    SUPER_ADMIN_ACTION,
+    usuario_es_super_admin,
+    validar_cambio_estatus_protegido,
+    validar_retiro_super_admin,
+)
+
 from app.services.notificacion_service import (
     enviar_correo_activacion_usuario,
     enviar_correo_cambio_estatus_usuario,
@@ -143,6 +150,9 @@ async def update_user(
 
     user = await User.get_or_none(
         id=user_id
+    ).prefetch_related(
+        "estatus",
+        "instancia",
     )
 
     if not user:
@@ -154,6 +164,40 @@ async def update_user(
     update_data = user_in.model_dump(
         exclude_unset=True
     )
+
+    estatus_anterior = user.estatus
+    estatus_nuevo = None
+
+    if "estatus_id" in update_data:
+        nuevo_estatus_id = update_data.get("estatus_id")
+
+        if nuevo_estatus_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "USER_STATUS_REQUIRED",
+                    "detail": "estatus_id no puede ser nulo.",
+                },
+            )
+
+        estatus_nuevo = await EstatusUsuario.get_or_none(
+            id=nuevo_estatus_id
+        )
+
+        if not estatus_nuevo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "USER_STATUS_NOT_FOUND",
+                    "detail": "Estatus de usuario no encontrado.",
+                },
+            )
+
+        await validar_cambio_estatus_protegido(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+            nuevo_estatus_nombre=estatus_nuevo.nombre,
+        )
 
     nuevo_correo = update_data.get(
         "correo_electronico"
@@ -204,6 +248,27 @@ async def update_user(
         )
 
     await user.save()
+
+    cambio_estatus = (
+        estatus_nuevo is not None
+        and (
+            estatus_anterior is None
+            or estatus_anterior.id != estatus_nuevo.id
+        )
+    )
+
+    if cambio_estatus:
+        await invalidar_sesiones_usuario(user)
+
+        await enviar_correo_cambio_estatus_usuario(
+            user=user,
+            estatus_anterior=estatus_anterior,
+            estatus_nuevo=estatus_nuevo,
+            motivo=(
+                "El estatus de su cuenta fue actualizado "
+                "por un administrador."
+            ),
+        )
 
     await user.fetch_related(
         "estatus",
@@ -526,6 +591,12 @@ async def cambiar_estatus_usuario(
         and estatus_anterior.id == estatus_usuario.id
     ):
         return user
+
+    await validar_cambio_estatus_protegido(
+        target_user_id=user_id,
+        current_user_id=current_user_id,
+        nuevo_estatus_nombre=estatus_usuario.nombre,
+    )
 
     user.estatus = estatus_usuario
 
@@ -893,7 +964,7 @@ async def assign_user_accion(
         )
 
     if (
-        accion.nombre == "SUPER_ADMIN"
+        accion.nombre == SUPER_ADMIN_ACTION
         and not await usuario_es_super_admin(
             current_user_id
         )
@@ -998,6 +1069,18 @@ async def remove_user_grupo(
             detail="El usuario no tiene asignado este grupo.",
         )
 
+    remueve_super_admin = await UsuarioAccion.filter(
+        usuario_id=user_id,
+        accion__nombre=SUPER_ADMIN_ACTION,
+        accion__modulo__grupo_id=grupo_id,
+    ).exists()
+
+    if remueve_super_admin:
+        await validar_retiro_super_admin(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+        )
+
     modulo_ids = await Modulo.filter(
         grupo_id=grupo_id,
     ).values_list(
@@ -1094,6 +1177,18 @@ async def remove_user_modulo(
             detail="El usuario no tiene asignado este módulo.",
         )
 
+    remueve_super_admin = await UsuarioAccion.filter(
+        usuario_id=user_id,
+        accion__nombre=SUPER_ADMIN_ACTION,
+        accion__modulo_id=modulo_id,
+    ).exists()
+
+    if remueve_super_admin:
+        await validar_retiro_super_admin(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+        )
+
     accion_ids = await Accion.filter(
         modulo_id=modulo_id,
     ).values_list(
@@ -1174,6 +1269,12 @@ async def remove_user_accion(
             detail="El usuario no tiene asignada esta acción.",
         )
 
+    if accion.nombre == SUPER_ADMIN_ACTION:
+        await validar_retiro_super_admin(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+        )
+
     await asignacion.delete()
 
     # El cambio de permisos invalida los JWT actuales.
@@ -1197,20 +1298,6 @@ async def usuario_tiene_accion(
     return await UsuarioAccion.filter(
         usuario_id=user_id,
         accion__nombre=accion_nombre,
-    ).exists()
-
-
-# ============================================================
-# VALIDAR SUPER ADMIN
-# ============================================================
-
-async def usuario_es_super_admin(
-    user_id: UUID,
-) -> bool:
-
-    return await UsuarioAccion.filter(
-        usuario_id=user_id,
-        accion__nombre="SUPER_ADMIN",
     ).exists()
 
 
@@ -1702,7 +1789,7 @@ async def assign_user_permisos_masivos(
             )
 
         if (
-            accion.nombre == "SUPER_ADMIN"
+            accion.nombre == SUPER_ADMIN_ACTION
             and not await usuario_es_super_admin(
                 current_user_id
             )

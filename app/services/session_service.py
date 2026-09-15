@@ -9,6 +9,9 @@ from app.models.user import (
     UsuarioModulo,
     UsuarioGrupo,
 )
+from app.services.super_admin_guard import (
+    validar_revocacion_total_por_inactividad,
+)
 
 
 DIAS_MAXIMOS_INACTIVIDAD = 90
@@ -84,6 +87,10 @@ async def revocar_accesos_usuario(usuario: User):
 
     No elimina al usuario ni modifica su estatus.
     """
+
+    await validar_revocacion_total_por_inactividad(
+        usuario.id
+    )
 
     await UsuarioAccion.filter(
         usuario_id=usuario.id
