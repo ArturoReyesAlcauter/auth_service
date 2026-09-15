@@ -425,6 +425,17 @@ class GrupoCatalogoRead(BaseModel):
 # - Si el usuario ya tiene contraseña, no se vuelve a enviar ese correo.
 
 
+class UsuarioPermisosDeltaCreate(BaseModel):
+    """Delta completo de permisos aplicado en una sola operación administrativa."""
+
+    grupo_ids_agregar: List[UUID] = Field(default_factory=list)
+    grupo_ids_quitar: List[UUID] = Field(default_factory=list)
+    modulo_ids_agregar: List[UUID] = Field(default_factory=list)
+    modulo_ids_quitar: List[UUID] = Field(default_factory=list)
+    accion_ids_agregar: List[UUID] = Field(default_factory=list)
+    accion_ids_quitar: List[UUID] = Field(default_factory=list)
+
+
 class UsuarioPermisosMasivosCreate(BaseModel):
     # Grupo que se quiere asignar directamente.
     #

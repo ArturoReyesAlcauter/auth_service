@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
+from tortoise.transactions import atomic
 
 from app.core.security import (
     get_password_hash,
@@ -30,6 +31,7 @@ from app.schemas.user import (
     UsuarioModuloCreate,
     UsuarioAccionCreate,
     UsuarioPermisosMasivosCreate,
+    UsuarioPermisosDeltaCreate,
 )
 
 from app.services.session_service import (
@@ -1671,6 +1673,351 @@ async def get_catalogo_permisos_por_grupo(
         )
 
     return grupo
+
+
+# ============================================================
+# APLICAR DELTA DE PERMISOS EN UNA SOLA OPERACIÓN
+# ============================================================
+
+
+def _validar_delta_sin_solapamientos(data: UsuarioPermisosDeltaCreate) -> None:
+    """Evita instrucciones contradictorias dentro de la misma petición."""
+
+    pares = (
+        ("grupo", set(data.grupo_ids_agregar), set(data.grupo_ids_quitar)),
+        ("modulo", set(data.modulo_ids_agregar), set(data.modulo_ids_quitar)),
+        ("accion", set(data.accion_ids_agregar), set(data.accion_ids_quitar)),
+    )
+
+    for tipo, agregar, quitar in pares:
+        if agregar & quitar:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "PERMISSION_DELTA_CONFLICT",
+                    "detail": (
+                        f"El delta contiene {tipo}s marcados para agregar "
+                        "y quitar al mismo tiempo."
+                    ),
+                },
+            )
+
+
+def _delta_tiene_operaciones(data: UsuarioPermisosDeltaCreate) -> bool:
+    return any(
+        (
+            data.grupo_ids_agregar,
+            data.grupo_ids_quitar,
+            data.modulo_ids_agregar,
+            data.modulo_ids_quitar,
+            data.accion_ids_agregar,
+            data.accion_ids_quitar,
+        )
+    )
+
+
+async def _cargar_grupos_delta(ids: set[UUID]) -> dict[UUID, Grupo]:
+    grupos: dict[UUID, Grupo] = {}
+
+    for grupo_id in ids:
+        grupo = await Grupo.get_or_none(id=grupo_id)
+
+        if not grupo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "GROUP_NOT_FOUND",
+                    "detail": f"Grupo no encontrado: {grupo_id}",
+                },
+            )
+
+        grupos[grupo_id] = grupo
+
+    return grupos
+
+
+async def _cargar_modulos_delta(ids: set[UUID]) -> dict[UUID, Modulo]:
+    modulos: dict[UUID, Modulo] = {}
+
+    for modulo_id in ids:
+        modulo = await Modulo.get_or_none(id=modulo_id).prefetch_related("grupo")
+
+        if not modulo:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "MODULE_NOT_FOUND",
+                    "detail": f"Módulo no encontrado: {modulo_id}",
+                },
+            )
+
+        modulos[modulo_id] = modulo
+
+    return modulos
+
+
+async def _cargar_acciones_delta(ids: set[UUID]) -> dict[UUID, Accion]:
+    acciones: dict[UUID, Accion] = {}
+
+    for accion_id in ids:
+        accion = await Accion.get_or_none(id=accion_id).prefetch_related(
+            "modulo",
+            "modulo__grupo",
+        )
+
+        if not accion:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "code": "ACTION_NOT_FOUND",
+                    "detail": f"Acción no encontrada: {accion_id}",
+                },
+            )
+
+        acciones[accion_id] = accion
+
+    return acciones
+
+
+@atomic()
+async def apply_user_permissions_delta(
+    user_id: UUID,
+    data: UsuarioPermisosDeltaCreate,
+    current_user_id: UUID,
+):
+    """
+    Aplica altas y bajas de permisos como una sola unidad de trabajo.
+
+    El objetivo principal es permitir la autoedición segura de un SUPER_ADMIN:
+    todas las mutaciones se validan primero, se ejecutan dentro de una transacción
+    y la sesión del usuario objetivo se invalida una sola vez al finalizar.
+    """
+
+    if not _delta_tiene_operaciones(data):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "PERMISSION_DELTA_EMPTY",
+                "detail": "Debes enviar al menos una operación de permisos.",
+            },
+        )
+
+    _validar_delta_sin_solapamientos(data)
+
+    user = await User.get_or_none(id=user_id)
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado.",
+        )
+
+    grupo_add_ids = set(data.grupo_ids_agregar)
+    grupo_remove_ids = set(data.grupo_ids_quitar)
+    modulo_add_ids = set(data.modulo_ids_agregar)
+    modulo_remove_ids = set(data.modulo_ids_quitar)
+    accion_add_ids = set(data.accion_ids_agregar)
+    accion_remove_ids = set(data.accion_ids_quitar)
+
+    grupos = await _cargar_grupos_delta(grupo_add_ids | grupo_remove_ids)
+    modulos = await _cargar_modulos_delta(modulo_add_ids | modulo_remove_ids)
+    acciones = await _cargar_acciones_delta(accion_add_ids | accion_remove_ids)
+
+    # Toda autorización se resuelve antes de escribir en la base de datos.
+    for grupo_id in grupo_add_ids:
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="ASIGNAR_GRUPOS_USUARIO",
+            grupo_id=grupo_id,
+        )
+
+    for grupo_id in grupo_remove_ids:
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="QUITAR_GRUPOS_USUARIO",
+            grupo_id=grupo_id,
+        )
+
+    for modulo_id in modulo_add_ids:
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="ASIGNAR_MODULOS_USUARIO",
+            grupo_id=modulos[modulo_id].grupo_id,
+        )
+
+    for modulo_id in modulo_remove_ids:
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="QUITAR_MODULOS_USUARIO",
+            grupo_id=modulos[modulo_id].grupo_id,
+        )
+
+    for accion_id in accion_add_ids:
+        accion = acciones[accion_id]
+
+        if (
+            accion.nombre == SUPER_ADMIN_ACTION
+            and not await usuario_es_super_admin(current_user_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "SUPER_ADMIN_REQUIRED",
+                    "detail": "Solo un SUPER_ADMIN puede asignar SUPER_ADMIN.",
+                },
+            )
+
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="ASIGNAR_ACCIONES_USUARIO",
+            grupo_id=accion.modulo.grupo_id,
+        )
+
+    for accion_id in accion_remove_ids:
+        accion = acciones[accion_id]
+        await validar_accion_en_grupo_o_super_admin(
+            user_id=current_user_id,
+            accion_nombre="QUITAR_ACCIONES_USUARIO",
+            grupo_id=accion.modulo.grupo_id,
+        )
+
+    # SUPER_ADMIN también puede desaparecer por cascada al quitar módulo o grupo.
+    remueve_super_admin = False
+
+    if accion_remove_ids:
+        remueve_super_admin = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion_id__in=accion_remove_ids,
+            accion__nombre=SUPER_ADMIN_ACTION,
+        ).exists()
+
+    if not remueve_super_admin and modulo_remove_ids:
+        remueve_super_admin = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion__nombre=SUPER_ADMIN_ACTION,
+            accion__modulo_id__in=modulo_remove_ids,
+        ).exists()
+
+    if not remueve_super_admin and grupo_remove_ids:
+        remueve_super_admin = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion__nombre=SUPER_ADMIN_ACTION,
+            accion__modulo__grupo_id__in=grupo_remove_ids,
+        ).exists()
+
+    if remueve_super_admin:
+        await validar_retiro_super_admin(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+        )
+
+    operaciones = {
+        "grupos_agregados": 0,
+        "grupos_quitados": 0,
+        "modulos_agregados": 0,
+        "modulos_quitados": 0,
+        "acciones_agregadas": 0,
+        "acciones_quitadas": 0,
+    }
+
+    # 1. Quitar acciones explícitas.
+    if accion_remove_ids:
+        operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion_id__in=accion_remove_ids,
+        ).delete()
+
+    # 2. Quitar módulos y sus acciones hijas.
+    for modulo_id in modulo_remove_ids:
+        operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion__modulo_id=modulo_id,
+        ).delete()
+        operaciones["modulos_quitados"] += await UsuarioModulo.filter(
+            usuario_id=user_id,
+            modulo_id=modulo_id,
+        ).delete()
+
+    # 3. Quitar grupos y cualquier asignación hija todavía existente.
+    for grupo_id in grupo_remove_ids:
+        modulo_ids_grupo = await Modulo.filter(grupo_id=grupo_id).values_list(
+            "id",
+            flat=True,
+        )
+
+        if modulo_ids_grupo:
+            operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
+                usuario_id=user_id,
+                accion__modulo_id__in=modulo_ids_grupo,
+            ).delete()
+            operaciones["modulos_quitados"] += await UsuarioModulo.filter(
+                usuario_id=user_id,
+                modulo_id__in=modulo_ids_grupo,
+            ).delete()
+
+        operaciones["grupos_quitados"] += await UsuarioGrupo.filter(
+            usuario_id=user_id,
+            grupo_id=grupo_id,
+        ).delete()
+
+    # 4. Agregar grupos explícitos.
+    for grupo_id in grupo_add_ids:
+        _, created = await UsuarioGrupo.get_or_create(
+            usuario_id=user_id,
+            grupo_id=grupos[grupo_id].id,
+        )
+        operaciones["grupos_agregados"] += int(created)
+
+    # 5. Agregar módulos y garantizar su grupo padre.
+    for modulo_id in modulo_add_ids:
+        modulo = modulos[modulo_id]
+        _, grupo_created = await UsuarioGrupo.get_or_create(
+            usuario_id=user_id,
+            grupo_id=modulo.grupo_id,
+        )
+        _, modulo_created = await UsuarioModulo.get_or_create(
+            usuario_id=user_id,
+            modulo_id=modulo.id,
+        )
+        operaciones["grupos_agregados"] += int(grupo_created)
+        operaciones["modulos_agregados"] += int(modulo_created)
+
+    # 6. Agregar acciones y garantizar módulo/grupo padre.
+    for accion_id in accion_add_ids:
+        accion = acciones[accion_id]
+        _, grupo_created = await UsuarioGrupo.get_or_create(
+            usuario_id=user_id,
+            grupo_id=accion.modulo.grupo_id,
+        )
+        _, modulo_created = await UsuarioModulo.get_or_create(
+            usuario_id=user_id,
+            modulo_id=accion.modulo_id,
+        )
+        _, accion_created = await UsuarioAccion.get_or_create(
+            usuario_id=user_id,
+            accion_id=accion.id,
+        )
+        operaciones["grupos_agregados"] += int(grupo_created)
+        operaciones["modulos_agregados"] += int(modulo_created)
+        operaciones["acciones_agregadas"] += int(accion_created)
+
+    total_operaciones = sum(operaciones.values())
+
+    if total_operaciones:
+        await resetear_ultima_sesion(user)
+        await invalidar_sesiones_usuario(user)
+
+    return {
+        "message": "Permisos actualizados correctamente.",
+        "user_id": str(user_id),
+        "operaciones": operaciones,
+        "total_operaciones": total_operaciones,
+        "sesiones_invalidadas": bool(total_operaciones),
+        "requiere_reautenticacion": bool(
+            total_operaciones and user_id == current_user_id
+        ),
+        "permisos": await obtener_permisos_usuario(user_id),
+    }
 
 
 # ============================================================
