@@ -5,6 +5,7 @@ from tortoise.expressions import F
 
 from app.core.config import TORTOISE_ORM, settings
 from app.core.security import get_password_hash
+from app.services.semaforo_catalog import SEMAFORO_CATALOG
 from app.models.user import (
     Accion,
     EstatusUsuario,
@@ -26,7 +27,6 @@ ADMIN_CURP = "AURA000101HDFXXX01"
 ADMIN_PASSWORD = settings.ADMIN_INITIAL_PASSWORD
 ADMIN_EMAIL = "admin@portusderechos.gob.mx"
 ADMIN_ENTIDAD_FEDERATIVA_ID = 9
-SEMAFORO_PASSWORD = "Semaforo2026!"
 
 # ==========================================
 # CATÁLOGO ACTUAL DE SISTEMAS Y PERMISOS
@@ -37,14 +37,6 @@ GRUPOS_LEGACY = ["MP", "MH", "VF", "RNCAS"]
 GRUPO_MESA_AYUDA = "MESA_AYUDA"
 GRUPO_FORMATOS_ATENCIONES = "FORMATOS_ATENCIONES"
 GRUPO_CRONOS = "CRONOS"
-GRUPO_SEMAFORO = "SEMAFORO"
-MODULOS_SEMAFORO = {
-    "SEMAFORO_ADMIN": "Administración y Supervisión Global del Semáforo",
-    "SEMAFORO_DGRJRDNNA": "Dirección General de Regulación, Jurisdicción y Restitución de Derechos de NNA",
-    "SEMAFORO_DGRCAS": "Dirección General de Representación Jurídica y Restitución de NNA",
-    "SEMAFORO_DGNPDDNNA": "Dirección General de Normatividad, Promoción y Difusión de los Derechos de NNA",
-    "SEMAFORO_DGCP": "Dirección General de Coordinación y Políticas",
-}
 
 
 ACCIONES_BITACORA = {
@@ -431,29 +423,8 @@ ACCIONES_REPORTES_FORMATOS = {
 }
 
 
-# 2. Acciones del Semáforo
-ACCIONES_SEMAFORO_CRUD = {
-    "VER_ACCIONES_SEMAFORO": "Permite visualizar las acciones de su respectiva DG.",
-    "CREAR_ACCION_SEMAFORO": "Permite crear una nueva acción en el semáforo.",
-    "EDITAR_ACCION_SEMAFORO": "Permite editar las acciones pertenecientes a su DG.",
-    "ELIMINAR_ACCION_SEMAFORO": "Permite eliminar lógicamente una acción.",
-}
-
-ACCIONES_SEMAFORO_DASHBOARD = {
-    "VER_DASHBOARD_SEMAFORO": "Permite consultar las estadísticas del semáforo.",
-}
-
-ACCIONES_SEMAFORO_ADMIN = {
-    "ADMINISTRAR_TODO_SEMAFORO": "Permite consultar, editar y supervisar los registros de todas las DGs en el Semáforo.",
-}
-
-# 3. Usuarios base de prueba para Semáforo (Las CURP deben ser de 18 caracteres) Semaforo2026!
-USUARIOS_PRUEBA_SEMAFORO = [
-    {"curp": "DGRJRDNNA000000000", "nombre": "Usuario", "apellido": "DGRJRDNNA", "modulo": "SEMAFORO_DGRJRDNNA"},
-    {"curp": "DGRCAS000000000000", "nombre": "Usuario", "apellido": "DGRCAS", "modulo": "SEMAFORO_DGRCAS"},
-    {"curp": "DGNPDDNNA000000000", "nombre": "Usuario", "apellido": "DGNPDDNNA", "modulo": "SEMAFORO_DGNPDDNNA"},
-    {"curp": "DGCP00000000000000", "nombre": "Usuario", "apellido": "DGCP", "modulo": "SEMAFORO_DGCP"},
-]
+# El catálogo de Control Agenda Nacional se define en
+# app.services.semaforo_catalog y conserva los grupos técnicos SEMAFORO_*.
 
 
 USUARIOS_PRUEBA_CRONOS = [
@@ -1114,38 +1085,35 @@ async def main() -> None:
         )
 
         # ==========================================
-        # X. MÓDULOS Y GRUPOS DE SEMÁFORO
+        # 6.5. CATÁLOGO DE CONTROL AGENDA NACIONAL
         # ==========================================
-        
-        # 1. Asegurar la creación del grupo único de Semáforo
-        grupo_semaforo, creado = await asegurar_grupo(
-            GRUPO_SEMAFORO, 
-            "Control Agenda Nacional (Semáforo)"
-        )
-        permisos_modificados = permisos_modificados or creado
-        grupos_actuales.append(grupo_semaforo)
 
-        # 2. Iterar sobre los módulos de Semáforo
-        for nombre_modulo, desc_modulo in MODULOS_SEMAFORO.items():
-            modulo, creado = await asegurar_modulo(grupo_semaforo, nombre_modulo, desc_modulo)
+        # Agenda resuelve el rol exclusivamente desde los grupos SEMAFORO_*.
+        # Por ello estos nombres deben conservarse como grupos y no como módulos.
+        for nombre_grupo, especificacion in SEMAFORO_CATALOG.items():
+            grupo, creado = await asegurar_grupo(
+                nombre_grupo,
+                especificacion.descripcion,
+            )
             permisos_modificados = permisos_modificados or creado
-            modulos_actuales.append(modulo)
+            grupos_actuales.append(grupo)
 
-            if nombre_modulo != "ADMIN":
-                # RAMA A: Acciones para las DGs (CRUD y Dashboard)
-                acciones_crud, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_CRUD)
-                permisos_modificados = permisos_modificados or cambios
-                acciones_actuales.extend(acciones_crud)
+            for especificacion_modulo in especificacion.modulos:
+                modulo, creado = await asegurar_modulo(
+                    grupo,
+                    especificacion_modulo.nombre,
+                    especificacion_modulo.descripcion,
+                )
+                permisos_modificados = permisos_modificados or creado
+                modulos_actuales.append(modulo)
 
-                acciones_dash, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_DASHBOARD)
+                acciones, cambios = await asegurar_acciones(
+                    modulo,
+                    dict(especificacion_modulo.acciones),
+                )
                 permisos_modificados = permisos_modificados or cambios
-                acciones_actuales.extend(acciones_dash)
-            else:
-                # RAMA B: Acciones exclusivas para el Administrador
-                acciones_admin, cambios = await asegurar_acciones(modulo, ACCIONES_SEMAFORO_ADMIN)
-                permisos_modificados = permisos_modificados or cambios
-                acciones_actuales.extend(acciones_admin)
-                
+                acciones_actuales.extend(acciones)
+
         # ==========================================
         # 7. USUARIO ADMIN PREDETERMINADO
         # ==========================================
@@ -1325,46 +1293,6 @@ async def main() -> None:
     
 
         # ==========================================
-        # 8.5. CREACIÓN DE USUARIOS DE PRUEBA (SEMÁFORO)
-        # ==========================================
-        print("\nSincronizando usuarios de prueba para Semáforo...")
-        contrasena_test = get_password_hash(SEMAFORO_PASSWORD)
-
-        for u_data in USUARIOS_PRUEBA_SEMAFORO:
-            user_test = await User.get_or_none(curp=u_data["curp"])
-            
-            if not user_test:
-                user_test = await User.create(
-                    curp=u_data["curp"],
-                    nombre=u_data["nombre"],
-                    primer_apellido=u_data["apellido"],
-                    segundo_apellido="Prueba",
-                    correo_electronico=f"{u_data['apellido'].lower()}@portusderechos.gob.mx",
-                    entidad_federativa_id=9, # CDMX por defecto
-                    numero_telefono="5500000000",
-                    contrasena_hasheada=contrasena_test,
-                    is_2fa_enabled=False,
-                    estatus=estatus_activo,
-                    instancia=instancia_sndif,
-                    intentos_login=0,
-                )
-                print(f"- Usuario creado: {u_data['curp']}")
-            
-            # Asignar el Grupo único de Semáforo al usuario
-            await UsuarioGrupo.get_or_create(usuario=user_test, grupo=grupo_semaforo)
-            
-            # Asignar el módulo correspondiente y sus acciones
-            modulo_correspondiente = next(
-                m for m in modulos_actuales 
-                if m.nombre == u_data["modulo"] and m.grupo_id == grupo_semaforo.id
-            )
-            await UsuarioModulo.get_or_create(usuario=user_test, modulo=modulo_correspondiente)
-            
-            acciones_del_modulo = await Accion.filter(modulo=modulo_correspondiente)
-            for acc in acciones_del_modulo:
-                await UsuarioAccion.get_or_create(usuario=user_test, accion=acc)
-
-        # ==========================================
         # 9. RESULTADO DEL SEED
         # ==========================================
 
@@ -1375,6 +1303,9 @@ async def main() -> None:
         print("Grupos vigentes:")
         print("- MESA_AYUDA")
         print("- FORMATOS_ATENCIONES")
+        print("- CRONOS")
+        for nombre_grupo in SEMAFORO_CATALOG:
+            print(f"- {nombre_grupo}")
 
         print("")
         print("Módulos de Mesa de Ayuda:")
