@@ -18,6 +18,7 @@ from app.schemas.user import (
     UserWithPermissionsRead,
     GrupoCatalogoRead,
     UsuarioPermisosMasivosCreate,
+    UsuarioPermisosDeltaCreate,
     CrearPasswordPrimeraVez,
     CambiarPasswordUsuario,
 )
@@ -666,6 +667,34 @@ async def obtener_usuario_por_id(
 # ==========================================
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ==========================================
+
+@router.patch(
+    "/{user_id}/permisos/delta",
+    status_code=status.HTTP_200_OK,
+)
+async def actualizar_permisos_usuario_delta(
+    user_id: UUID,
+    data: UsuarioPermisosDeltaCreate,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Aplica altas y bajas de permisos en una sola operación transaccional.
+
+    Este contrato evita que una autoedición administrativa invalide el token
+    del actor entre varias peticiones consecutivas. El backend valida todo el
+    delta antes de escribir, protege SUPER_ADMIN y revoca las sesiones del
+    usuario objetivo una sola vez al finalizar.
+
+    Si el usuario autenticado se modifica a sí mismo, la respuesta puede indicar
+    requiere_reautenticacion=true. El cliente debe terminar la operación y luego
+    solicitar un nuevo inicio de sesión.
+    """
+    return await user_service.apply_user_permissions_delta(
+        user_id=user_id,
+        data=data,
+        current_user_id=current_user.id,
+    )
+
 
 @router.post(
     "/{user_id}/permisos",
