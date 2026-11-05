@@ -313,8 +313,14 @@ class PermisosUsuarioRead(BaseModel):
     grupos: List[GrupoPermisoRead] = []
 
 
+class AccesoSistemaRead(BaseModel):
+    codigo: str
+    grupos_autorizados: List[str] = Field(default_factory=list)
+
+
 class UserWithPermissionsRead(UserRead):
     permisos: PermisosUsuarioRead
+    accesos_sistemas: List[AccesoSistemaRead] = Field(default_factory=list)
 
     # ==========================================
 # CATÁLOGO COMPLETO DE PERMISOS

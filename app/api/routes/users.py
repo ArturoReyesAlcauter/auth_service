@@ -23,6 +23,7 @@ from app.schemas.user import (
     CambiarPasswordUsuario,
 )
 from app.services import user_service, auth_service
+from app.services.agenda_response import build_agenda_system_accesses
 
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
@@ -156,6 +157,7 @@ async def obtener_mi_usuario(
     await current_user.fetch_related("estatus", "instancia")
 
     permisos = await user_service.obtener_permisos_usuario(current_user.id)
+    accesos_sistemas = build_agenda_system_accesses(permisos)
 
     return {
         "id": current_user.id,
@@ -174,6 +176,7 @@ async def obtener_mi_usuario(
         "fecha_creacion": current_user.fecha_creacion,
         "fecha_actualizacion": current_user.fecha_actualizacion,
         "permisos": permisos,
+        "accesos_sistemas": accesos_sistemas,
     }
 
 
