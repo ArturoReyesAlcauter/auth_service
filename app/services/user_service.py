@@ -1326,8 +1326,15 @@ async def validar_accion_en_grupo_o_super_admin(
     grupo_id: UUID,
 ) -> None:
 
+    # El alcance global de SUPER_ADMIN requiere además la acción
+    # administrativa específica. Quitar esa acción revoca su efecto.
     if await usuario_es_super_admin(user_id):
-        return
+        tiene_accion_global = await UsuarioAccion.filter(
+            usuario_id=user_id,
+            accion__nombre=accion_nombre,
+        ).exists()
+        if tiene_accion_global:
+            return
 
     tiene_permiso = await usuario_tiene_accion_en_grupo(
         user_id=user_id,
@@ -1929,10 +1936,15 @@ async def apply_user_permissions_delta(
 
     # 2. Quitar módulos y sus acciones hijas.
     for modulo_id in modulo_remove_ids:
-        operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
-            usuario_id=user_id,
-            accion__modulo_id=modulo_id,
-        ).delete()
+        ids_acciones_modulo = await Accion.filter(
+            modulo_id=modulo_id,
+        ).values_list("id", flat=True)
+
+        if ids_acciones_modulo:
+            operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
+                usuario_id=user_id,
+                accion_id__in=ids_acciones_modulo,
+            ).delete()
         operaciones["modulos_quitados"] += await UsuarioModulo.filter(
             usuario_id=user_id,
             modulo_id=modulo_id,
@@ -1946,10 +1958,15 @@ async def apply_user_permissions_delta(
         )
 
         if modulo_ids_grupo:
-            operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
-                usuario_id=user_id,
-                accion__modulo_id__in=modulo_ids_grupo,
-            ).delete()
+            ids_acciones_grupo = await Accion.filter(
+                modulo_id__in=modulo_ids_grupo,
+            ).values_list("id", flat=True)
+
+            if ids_acciones_grupo:
+                operaciones["acciones_quitadas"] += await UsuarioAccion.filter(
+                    usuario_id=user_id,
+                    accion_id__in=ids_acciones_grupo,
+                ).delete()
             operaciones["modulos_quitados"] += await UsuarioModulo.filter(
                 usuario_id=user_id,
                 modulo_id__in=modulo_ids_grupo,

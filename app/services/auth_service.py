@@ -251,6 +251,14 @@ async def generar_redirect_code(user: User, redirect_url: str) -> dict:
     """
     validar_redirect_url_permitida(redirect_url)
 
+    # SSO exige la autorización efectiva actual, no únicamente que la URL
+    # esté en una allowlist. Se comprueba en DB en cada solicitud.
+    from app.services import user_service
+    from app.services.system_entry_policy import require_system_entry
+
+    permisos = await user_service.obtener_permisos_usuario(user.id)
+    require_system_entry(redirect_url, permisos)
+
     await TokenUsuario.filter(
         usuario_id=user.id,
         tipo="REDIRECT_CODE",

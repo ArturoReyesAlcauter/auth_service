@@ -98,10 +98,8 @@ def requiere_accion(nombre_accion: str) -> Callable:
         # puede consumir cualquier endpoint administrativo protegido por acción.
         # Los permisos funcionales de otros sistemas (por ejemplo, Semáforo)
         # siguen requiriendo asignaciones explícitas en sus propios contratos.
-        if (
-            "SUPER_ADMIN" not in acciones_usuario
-            and nombre_accion not in acciones_usuario
-        ):
+        # SUPER_ADMIN no sustituye ninguna acción explícita retirada.
+        if nombre_accion not in acciones_usuario:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"No tienes permiso para ejecutar la acción: {nombre_accion}",

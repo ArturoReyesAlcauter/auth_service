@@ -8,6 +8,7 @@ from app.models.user import (
     UsuarioAccion,
     UsuarioModulo,
     UsuarioGrupo,
+    TokenUsuario,
 )
 from app.services.super_admin_guard import (
     validar_revocacion_total_por_inactividad,
@@ -71,6 +72,12 @@ async def invalidar_sesiones_usuario(
     await usuario.refresh_from_db(
         fields=["token_version"]
     )
+
+    # Un SSO pendiente no tiene token_version, por eso se revoca explícitamente.
+    await TokenUsuario.filter(
+        usuario_id=usuario.id,
+        tipo="REDIRECT_CODE",
+    ).delete()
 
     return usuario
 

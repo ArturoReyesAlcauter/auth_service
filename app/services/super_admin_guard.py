@@ -71,7 +71,7 @@ async def validar_retiro_super_admin(
 
     Reglas:
     - Solo otro SUPER_ADMIN puede retirar SUPER_ADMIN.
-    - Un SUPER_ADMIN no puede retirarse a sí mismo esa acción.
+    - Puede retirarse su propio permiso si existe otro administrador activo.
     - No se puede retirar al último SUPER_ADMIN activo.
     """
 
@@ -81,12 +81,8 @@ async def validar_retiro_super_admin(
             "Solo un SUPER_ADMIN puede retirar permisos SUPER_ADMIN.",
         )
 
-    if target_user_id == current_user_id:
-        raise _forbidden(
-            "SELF_SUPER_ADMIN_REMOVAL_FORBIDDEN",
-            "No puedes retirar tu propio permiso SUPER_ADMIN.",
-        )
-
+    # Auto-revocación permitida. Se impide perder el último SUPER_ADMIN
+    # activo, independientemente de quién inicia la operación.
     if not await usuario_es_super_admin_activo(target_user_id):
         return
 
