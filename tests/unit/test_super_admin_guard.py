@@ -37,12 +37,22 @@ def test_solo_super_admin_puede_retirar_super_admin(monkeypatch):
     assert_error(exc_info, 403, "SUPER_ADMIN_REQUIRED")
 
 
-def test_super_admin_no_puede_retirarse_a_si_mismo(monkeypatch):
+def test_super_admin_no_puede_retirarse_si_es_el_ultimo_activo(monkeypatch):
     user_id = uuid4()
     monkeypatch.setattr(
         guard,
         "usuario_es_super_admin",
         AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        guard,
+        "usuario_es_super_admin_activo",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        guard,
+        "contar_super_admin_activos",
+        AsyncMock(return_value=1),
     )
 
     with pytest.raises(HTTPException) as exc_info:
@@ -53,7 +63,33 @@ def test_super_admin_no_puede_retirarse_a_si_mismo(monkeypatch):
             )
         )
 
-    assert_error(exc_info, 403, "SELF_SUPER_ADMIN_REMOVAL_FORBIDDEN")
+    assert_error(exc_info, 409, "LAST_ACTIVE_SUPER_ADMIN_REQUIRED")
+
+
+def test_super_admin_puede_retirarse_si_queda_otro_activo(monkeypatch):
+    user_id = uuid4()
+    monkeypatch.setattr(
+        guard,
+        "usuario_es_super_admin",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        guard,
+        "usuario_es_super_admin_activo",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        guard,
+        "contar_super_admin_activos",
+        AsyncMock(return_value=2),
+    )
+
+    run(
+        guard.validar_retiro_super_admin(
+            target_user_id=user_id,
+            current_user_id=user_id,
+        )
+    )
 
 
 def test_no_se_puede_retirar_ultimo_super_admin_activo(monkeypatch):

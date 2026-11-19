@@ -35,6 +35,7 @@ ADMIN_ENTIDAD_FEDERATIVA_ID = 9
 GRUPOS_LEGACY = ["MP", "MH", "VF", "RNCAS"]
 
 GRUPO_MESA_AYUDA = "MESA_AYUDA"
+GRUPO_CONFIGURACION = "CONFIGURACION"
 GRUPO_FORMATOS_ATENCIONES = "FORMATOS_ATENCIONES"
 GRUPO_CRONOS = "CRONOS"
 
@@ -643,10 +644,59 @@ async def eliminar_catalogo_legacy() -> bool:
     return eliminados > 0
 
 
+async def validar_seed_solo_bootstrap() -> None:
+    """Bloquea el seed en bases pobladas para no reponer permisos revocados.
+
+    seed.py prepara exclusivamente una base vacia; cualquier sincronizacion de
+    catalogos o membresias existentes requiere una migracion versionada,
+    revisada y aplicada por separado.
+    """
+    modelos_protegidos = (
+        ("usuarios", User),
+        ("grupos", Grupo),
+        ("modulos", Modulo),
+        ("acciones", Accion),
+        ("usuario_grupos", UsuarioGrupo),
+        ("usuario_modulos", UsuarioModulo),
+        ("usuario_acciones", UsuarioAccion),
+    )
+    for nombre, modelo in modelos_protegidos:
+        if await modelo.exists():
+            raise RuntimeError(
+                "SEED_BLOQUEADO_BASE_POBLADA: "
+                f"se encontraron registros en {nombre}. "
+                "El seed inicial no debe alterar usuarios, sesiones, "
+                "catalogos ni permisos existentes. "
+                "Usa una migracion controlada, no seed.py."
+            )
+
+
+async def validar_separacion_configuracion() -> None:
+    """Evita que el seed borre por cascada permisos administrativos existentes.
+
+    La migración de catálogo debe ejecutarse y comprobarse primero en
+    la base de desarrollo. Nunca se reubican módulos mediante deletes.
+    """
+    pendientes = await Modulo.filter(
+        grupo__nombre=GRUPO_MESA_AYUDA,
+        nombre__in=("ADMINISTRACION_USUARIOS", "ADMINISTRACION_PERMISOS"),
+    ).exists()
+    if pendientes:
+        raise RuntimeError(
+            "La administración todavía pertenece a MESA_AYUDA. "
+            "No ejecutes el seed hasta migrar esos módulos conservando sus UUID "
+            "y sus asignaciones. Consulta el plan de migración de Configuración."
+        )
+
+
 async def main() -> None:
     await Tortoise.init(config=TORTOISE_ORM)
 
     try:
+        # Primera operacion con datos: ninguna escritura antes de comprobar
+        # que la base esta vacia. Evita reponer grants ya revocados.
+        await validar_seed_solo_bootstrap()
+        await validar_separacion_configuracion()
         print(
             "Iniciando seed de auth_service para "
             "Mesa de Ayuda y Formatos de Atenciones..."
@@ -701,6 +751,11 @@ async def main() -> None:
         )
         permisos_modificados = permisos_modificados or creado
 
+        grupo_configuracion, creado = await asegurar_grupo(
+            GRUPO_CONFIGURACION,
+            "Administración independiente de usuarios y permisos del ecosistema.",
+        )
+        permisos_modificados = permisos_modificados or creado
 
         grupo_formatos_atenciones, creado = await asegurar_grupo(
             GRUPO_FORMATOS_ATENCIONES,
@@ -741,7 +796,7 @@ async def main() -> None:
         permisos_modificados = permisos_modificados or cambios
 
         modulo_usuarios, creado = await asegurar_modulo(
-            grupo_mesa_ayuda,
+            grupo_configuracion,
             "ADMINISTRACION_USUARIOS",
             "Administración de usuarios y asignación de accesos.",
         )
@@ -754,7 +809,7 @@ async def main() -> None:
         permisos_modificados = permisos_modificados or cambios
 
         modulo_permisos, creado = await asegurar_modulo(
-            grupo_mesa_ayuda,
+            grupo_configuracion,
             "ADMINISTRACION_PERMISOS",
             (
                 "Administración del catálogo de grupos, "
@@ -989,15 +1044,19 @@ async def main() -> None:
 
         grupos_actuales = [
             grupo_mesa_ayuda,
+            grupo_configuracion,
             grupo_formatos_atenciones,
             grupo_cronos,
         ]
 
         modulos_mesa_ayuda = [
             modulo_bitacora,
+            modulo_reportes,
+        ]
+
+        modulos_configuracion = [
             modulo_usuarios,
             modulo_permisos,
-            modulo_reportes,
         ]
 
         modulos_formatos_atenciones = [
@@ -1019,6 +1078,7 @@ async def main() -> None:
 
         modulos_actuales = [
             *modulos_mesa_ayuda,
+            *modulos_configuracion,
             *modulos_formatos_atenciones,
             *modulos_cronos,
         ]
@@ -1302,6 +1362,7 @@ async def main() -> None:
         print("")
         print("Grupos vigentes:")
         print("- MESA_AYUDA")
+        print("- CONFIGURACION")
         print("- FORMATOS_ATENCIONES")
         print("- CRONOS")
         for nombre_grupo in SEMAFORO_CATALOG:
@@ -1310,9 +1371,11 @@ async def main() -> None:
         print("")
         print("Módulos de Mesa de Ayuda:")
         print("- BITACORA_ATENCIONES")
+        print("- REPORTES_INDICADORES")
+
+        print("Módulos de Configuración:")
         print("- ADMINISTRACION_USUARIOS")
         print("- ADMINISTRACION_PERMISOS")
-        print("- REPORTES_INDICADORES")
 
         print("")
         print("Módulos de Formatos de Atenciones:")

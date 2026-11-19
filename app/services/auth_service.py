@@ -282,38 +282,50 @@ async def generar_redirect_code(user: User, redirect_url: str) -> dict:
 
 
 async def consumir_redirect_code(code: str) -> User:
-    """
-    Consume un código temporal de redirección.
+    """Consume un codigo SSO una sola vez, incluso con concurrencia.
 
-    El código se elimina al primer uso, aunque después falle una validación,
-    para evitar reutilización.
+    La lectura bloqueada y la eliminacion ocurren en una misma
+    transaccion. La eliminacion se confirma antes de validar
+    expiracion y estado del usuario, preservando el consumo unico.
     """
-    token_db = await TokenUsuario.get_or_none(
-        token=code,
-        tipo="REDIRECT_CODE",
-    ).prefetch_related("usuario")
+    from tortoise.transactions import in_transaction
 
-    if not token_db:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "REDIRECT_CODE_INVALID",
-                "detail": "Código temporal inválido o ya utilizado.",
-            },
+    async with in_transaction() as conexion:
+        token_db = await (
+            TokenUsuario.filter(
+                token=code,
+                tipo="REDIRECT_CODE",
+            )
+            .using_db(conexion)
+            .select_for_update()
+            .prefetch_related("usuario")
+            .first()
         )
 
-    user = token_db.usuario
+        if not token_db:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "REDIRECT_CODE_INVALID",
+                    "detail": "C?digo temporal inv?lido o ya utilizado.",
+                },
+            )
+
+        user = token_db.usuario
+        fecha_expiracion = token_db.fecha_expiracion
+
+        # El codigo queda consumido dentro de la transaccion.
+        await token_db.delete(using_db=conexion)
+
+    # La transaccion ya confirmo la eliminacion.
     ahora = datetime.now(timezone.utc)
 
-    # Invalidar el código al intercambiarlo, incluso si ya expiró.
-    await token_db.delete()
-
-    if token_db.fecha_expiracion and token_db.fecha_expiracion < ahora:
+    if fecha_expiracion and fecha_expiracion < ahora:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
                 "code": "REDIRECT_CODE_EXPIRED",
-                "detail": "El código temporal expiró.",
+                "detail": "El c?digo temporal expir?.",
             },
         )
 

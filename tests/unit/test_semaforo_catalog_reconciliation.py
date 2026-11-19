@@ -1,62 +1,57 @@
-import sys
-from pathlib import Path
+"""Regresión del catálogo canónico: las DG son módulos, no grupos legados.
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+Este archivo sustituye pruebas del esquema SEMAFORO_* previo a la consolidación R4.
+No restaurar ACTION_TO_MODULE ni grupos antiguos como solución al ImportError.
+"""
 
 from app.services.semaforo_catalog import (
-    ACTION_TO_MODULE,
-    SEMAFORO_ADMIN_GROUP,
+    ACCIONES_SEMAFORO_ADMIN,
+    ACCIONES_SEMAFORO_CRUD,
+    ACCIONES_SEMAFORO_DASHBOARD,
+    SEMAFORO_ADMIN_MODULE,
     SEMAFORO_CATALOG,
-    SEMAFORO_DG_GROUPS,
-    SEMAFORO_GROUP_NAMES,
-    target_group_for_consolidated_module,
+    SEMAFORO_CONSOLIDATED_GROUP,
+    SEMAFORO_DG_MODULES,
 )
 
 
-def test_semaforo_technical_names_are_groups() -> None:
-    assert tuple(SEMAFORO_CATALOG) == SEMAFORO_GROUP_NAMES
-    assert SEMAFORO_ADMIN_GROUP == "SEMAFORO_ADMIN"
-    assert set(SEMAFORO_DG_GROUPS) == {
-        "SEMAFORO_DGRJRDNNA",
-        "SEMAFORO_DGRCAS",
-        "SEMAFORO_DGNPDDNNA",
-        "SEMAFORO_DGCP",
+def _modules():
+    assert tuple(SEMAFORO_CATALOG) == (SEMAFORO_CONSOLIDATED_GROUP,)
+    return {
+        module.nombre: module
+        for module in SEMAFORO_CATALOG[SEMAFORO_CONSOLIDATED_GROUP].modulos
     }
 
 
-def test_admin_group_has_global_control_module() -> None:
-    modules = SEMAFORO_CATALOG[SEMAFORO_ADMIN_GROUP].modulos
-    assert [module.nombre for module in modules] == ["CONTROL_GLOBAL_SEMAFORO"]
-    assert set(modules[0].acciones) == {"ADMINISTRAR_TODO_SEMAFORO"}
+def test_legacy_group_names_are_modules_not_independent_groups():
+    modules = _modules()
+    assert set(modules) == {SEMAFORO_ADMIN_MODULE, *SEMAFORO_DG_MODULES}
+    assert SEMAFORO_ADMIN_MODULE not in SEMAFORO_CATALOG
+    assert all(name not in SEMAFORO_CATALOG for name in SEMAFORO_DG_MODULES)
 
 
-def test_dg_groups_have_crud_and_dashboard_modules() -> None:
-    for group_name in SEMAFORO_DG_GROUPS:
-        modules = SEMAFORO_CATALOG[group_name].modulos
-        assert [module.nombre for module in modules] == [
-            "GESTION_ACCIONES",
-            "DASHBOARD_SEMAFORO",
-        ]
-        assert set(modules[0].acciones) == {
-            "VER_ACCIONES_SEMAFORO",
-            "CREAR_ACCION_SEMAFORO",
-            "EDITAR_ACCION_SEMAFORO",
-            "ELIMINAR_ACCION_SEMAFORO",
-        }
-        assert set(modules[1].acciones) == {"VER_DASHBOARD_SEMAFORO"}
+def test_admin_action_is_only_in_admin_module():
+    modules = _modules()
+    admin_actions = set(ACCIONES_SEMAFORO_ADMIN)
+    assert admin_actions == {"ADMINISTRAR_TODO_SEMAFORO"}
+    assert set(modules[SEMAFORO_ADMIN_MODULE].acciones) == admin_actions
+    for name in SEMAFORO_DG_MODULES:
+        assert not admin_actions.intersection(modules[name].acciones)
 
 
-def test_consolidated_modules_map_back_to_agenda_groups() -> None:
-    for group_name in SEMAFORO_GROUP_NAMES:
-        assert target_group_for_consolidated_module(group_name) == group_name
+def test_dg_modules_contain_crud_and_dashboard_without_admin_grants():
+    modules = _modules()
+    expected = set(ACCIONES_SEMAFORO_CRUD) | set(ACCIONES_SEMAFORO_DASHBOARD)
+    assert len(expected) == 5
+    for name in SEMAFORO_DG_MODULES:
+        assert set(modules[name].acciones) == expected
 
-    assert target_group_for_consolidated_module("SEMAFORO") is None
-    assert target_group_for_consolidated_module("OTRO") is None
 
-
-def test_actions_map_to_their_target_modules() -> None:
-    assert ACTION_TO_MODULE["VER_ACCIONES_SEMAFORO"] == "GESTION_ACCIONES"
-    assert ACTION_TO_MODULE["VER_DASHBOARD_SEMAFORO"] == "DASHBOARD_SEMAFORO"
-    assert ACTION_TO_MODULE["ADMINISTRAR_TODO_SEMAFORO"] == "CONTROL_GLOBAL_SEMAFORO"
+def test_catalog_exposes_immutable_action_mappings():
+    modules = _modules()
+    try:
+        modules[SEMAFORO_ADMIN_MODULE].acciones["PRUEBA"] = "No permitido"
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("El catálogo de acciones debe ser inmutable")

@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
-from app.models.user import UsuarioAccion
+from app.models.user import EstatusUsuario, UsuarioAccion
 
 
 SUPER_ADMIN_ACTION = "SUPER_ADMIN"
@@ -27,6 +27,25 @@ def _conflict(code: str, detail: str) -> HTTPException:
             "detail": detail,
         },
     )
+
+
+async def bloquear_mutacion_super_admin() -> None:
+    """Serializa decisiones de retirar/desactivar administradores en PostgreSQL.
+
+    Requiere que el llamador mantenga una transacción ABIERTA hasta terminar
+    todas sus escrituras. El estado Activo es un registro estable del catálogo.
+    FOR NO KEY UPDATE evita bloquear la creación de FK a dicho registro.
+    SQLite ignora FOR UPDATE: no constituye prueba de concurrencia real.
+    """
+    # Bloquear en orden determinista y rechazar un catálogo ambiguo.
+    estados_activos = await EstatusUsuario.filter(
+        nombre__iexact=ACTIVE_STATUS_NAME,
+    ).order_by("id").select_for_update(no_key=True)
+    if len(estados_activos) != 1:
+        raise _conflict(
+            "ACTIVE_STATUS_MISSING",
+            "El estatus Activo debe existir exactamente una vez.",
+        )
 
 
 async def usuario_es_super_admin(user_id: UUID) -> bool:

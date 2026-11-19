@@ -14,12 +14,35 @@ def group(name, *actions, module="MODULO"):
 
 class EffectiveAuthorizationTests(unittest.TestCase):
     def test_super_admin_does_not_grant_mesa_or_formatos(self):
-        data = perms(group("MESA_AYUDA", "SUPER_ADMIN"))
+        data = perms(group("CONFIGURACION", "SUPER_ADMIN", module="ADMINISTRACION_USUARIOS"))
         self.assertTrue(has_system_access("ADMINISTRACION_SISTEMA", data))
         self.assertFalse(has_system_access("MESA_AYUDA", data))
         self.assertFalse(has_system_access("FORMATOS_ATENCIONES", data))
         self.assertFalse(has_system_access("DIRECTORIO_PROCURADORES", data))
         self.assertFalse(has_system_access("CONTROL_AGENDA_NACIONAL", data))
+
+    def test_separacion_mesa_y_configuracion_por_grupo(self):
+        casos = (
+            (perms(group("MESA_AYUDA", "VER_BITACORA")), True, False),
+            (perms(group("CONFIGURACION", "VER_USUARIOS", module="ADMINISTRACION_USUARIOS")), False, True),
+            (perms(group("MESA_AYUDA", "VER_BITACORA"), group("CONFIGURACION", "VER_USUARIOS")), True, True),
+            (perms(group("MESA_AYUDA"), group("CONFIGURACION")), False, False),
+        )
+        for datos, esperado_mesa, esperado_config in casos:
+            self.assertEqual(has_system_access("MESA_AYUDA", datos), esperado_mesa)
+            self.assertEqual(has_system_access("ADMINISTRACION_SISTEMA", datos), esperado_config)
+
+    def test_acciones_administrativas_en_mesa_no_autorizan_configuracion(self):
+        for accion in ("SUPER_ADMIN", "VER_USUARIOS", "ADMINISTRAR_USUARIOS"):
+            datos = perms(group("MESA_AYUDA", accion, module="ADMINISTRACION_USUARIOS"))
+            self.assertFalse(has_system_access("ADMINISTRACION_SISTEMA", datos))
+
+    def test_accion_configuracion_revocada_no_autoriza(self):
+        datos = perms(group("CONFIGURACION", module="ADMINISTRACION_USUARIOS"))
+        with self.assertRaises(HTTPException) as err:
+            require_system_entry("https://config.pfpnna.tech/app/usuarios", datos)
+        self.assertEqual(err.exception.status_code, 403)
+        self.assertEqual(err.exception.detail["code"], "SYSTEM_ACCESS_REVOKED")
 
     def test_individual_actions_are_required(self):
         data = perms(group("MESA_AYUDA", "VER_BITACORA"))
