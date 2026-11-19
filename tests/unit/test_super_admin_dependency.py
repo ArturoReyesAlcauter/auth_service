@@ -24,11 +24,32 @@ def credentials():
     )
 
 
-def test_super_admin_es_bypass_global(monkeypatch):
+def test_super_admin_no_sustituye_accion_explicita_retirada(monkeypatch):
+    # Regla R3: SUPER_ADMIN no reemplaza una accion retirada.
     monkeypatch.setattr(
         dependencies,
         "decode_access_token",
         lambda _: {"acciones": ["SUPER_ADMIN"]},
+    )
+
+    dependency = dependencies.requiere_accion("ACTUALIZAR_USUARIO")
+
+    with pytest.raises(HTTPException) as exc_info:
+        run(
+            dependency(
+                credentials=credentials(),
+                current_user=SimpleNamespace(id="admin"),
+            )
+        )
+
+    assert exc_info.value.status_code == 403
+
+
+def test_accion_explicita_autoriza_administracion(monkeypatch):
+    monkeypatch.setattr(
+        dependencies,
+        "decode_access_token",
+        lambda _: {"acciones": ["SUPER_ADMIN", "ACTUALIZAR_USUARIO"]},
     )
 
     current_user = SimpleNamespace(id="admin")

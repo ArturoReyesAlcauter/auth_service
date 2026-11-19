@@ -26,6 +26,7 @@ FORMATOS_ACTIONS = frozenset({
     "GENERAR_EXCEL_FORMATO_INDIVIDUAL", "GENERAR_EXCEL_FORMATOS_CONSOLIDADO",
     "EXPORTAR_DATOS_FORMATOS",
 })
+CONFIG_GROUP = "CONFIGURACION"
 CONFIG_ACTIONS = frozenset({
     "SUPER_ADMIN", "ADMINISTRAR_USUARIOS", "VER_USUARIOS",
     "VER_CATALOGO_PERMISOS", "ASIGNAR_GRUPOS_USUARIO",
@@ -109,7 +110,7 @@ def has_system_access(target: str, permisos: object) -> bool:
     if target == "CONTROL_AGENDA_NACIONAL":
         return derive_agenda_system_access(grupos) is not None
     if target == "ADMINISTRACION_SISTEMA":
-        return bool(_actions(grupos) & CONFIG_ACTIONS)
+        return bool(_actions(grupos, CONFIG_GROUP) & CONFIG_ACTIONS)
     return False
 
 

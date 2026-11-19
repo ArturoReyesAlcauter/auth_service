@@ -1,10 +1,11 @@
+import logging
 from uuid import UUID
 from secrets import token_urlsafe
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from tortoise.exceptions import IntegrityError
-from tortoise.transactions import atomic
+from tortoise.transactions import atomic, in_transaction
 
 from app.core.security import (
     get_password_hash,
@@ -41,6 +42,7 @@ from app.services.session_service import (
 
 from app.services.super_admin_guard import (
     SUPER_ADMIN_ACTION,
+    bloquear_mutacion_super_admin,
     usuario_es_super_admin,
     validar_cambio_estatus_protegido,
     validar_retiro_super_admin,
@@ -52,10 +54,14 @@ from app.services.notificacion_service import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 # ============================================================
 # CREAR USUARIO
 # ============================================================
 
+@atomic()
 async def create_user(
     user_in: UserCreate,
     creado_por: UUID,
@@ -195,12 +201,6 @@ async def update_user(
                 },
             )
 
-        await validar_cambio_estatus_protegido(
-            target_user_id=user_id,
-            current_user_id=current_user_id,
-            nuevo_estatus_nombre=estatus_nuevo.nombre,
-        )
-
     nuevo_correo = update_data.get(
         "correo_electronico"
     )
@@ -249,8 +249,6 @@ async def update_user(
             value,
         )
 
-    await user.save()
-
     cambio_estatus = (
         estatus_nuevo is not None
         and (
@@ -259,9 +257,21 @@ async def update_user(
         )
     )
 
-    if cambio_estatus:
-        await invalidar_sesiones_usuario(user)
+    # Autorización, escritura e invalidación se confirman juntas.
+    # El correo externo se envía después del COMMIT.
+    async with in_transaction():
+        if estatus_nuevo is not None:
+            await bloquear_mutacion_super_admin()
+            await validar_cambio_estatus_protegido(
+                target_user_id=user_id,
+                current_user_id=current_user_id,
+                nuevo_estatus_nombre=estatus_nuevo.nombre,
+            )
+        await user.save()
+        if cambio_estatus:
+            await invalidar_sesiones_usuario(user)
 
+    if cambio_estatus:
         await enviar_correo_cambio_estatus_usuario(
             user=user,
             estatus_anterior=estatus_anterior,
@@ -594,26 +604,24 @@ async def cambiar_estatus_usuario(
     ):
         return user
 
-    await validar_cambio_estatus_protegido(
-        target_user_id=user_id,
-        current_user_id=current_user_id,
-        nuevo_estatus_nombre=estatus_usuario.nombre,
-    )
+    # El bloqueo y el conteo deben pertenecer a la MISMA transacción
+    # que cambia el estatus e invalida las sesiones.
+    async with in_transaction():
+        await bloquear_mutacion_super_admin()
+        await validar_cambio_estatus_protegido(
+            target_user_id=user_id,
+            current_user_id=current_user_id,
+            nuevo_estatus_nombre=estatus_usuario.nombre,
+        )
 
-    user.estatus = estatus_usuario
+        user.estatus = estatus_usuario
+        if estatus_usuario.nombre.lower() == "activo":
+            user.intentos_login = 0
 
-    if estatus_usuario.nombre.lower() == "activo":
-        user.intentos_login = 0
-
-    await user.save(
-        update_fields=[
-            "estatus_id",
-            "intentos_login",
-        ]
-    )
-
-    # Invalidar todos los JWT activos por cambio de estatus.
-    await invalidar_sesiones_usuario(user)
+        await user.save(
+            update_fields=["estatus_id", "intentos_login"],
+        )
+        await invalidar_sesiones_usuario(user)
 
     await user.fetch_related(
         "estatus",
@@ -800,6 +808,7 @@ async def get_user_by_id(
 # ASIGNAR GRUPO
 # ============================================================
 
+@atomic()
 async def assign_user_grupo(
     user_id: UUID,
     data: UsuarioGrupoCreate,
@@ -863,6 +872,7 @@ async def assign_user_grupo(
 # ASIGNAR MÓDULO
 # ============================================================
 
+@atomic()
 async def assign_user_modulo(
     user_id: UUID,
     data: UsuarioModuloCreate,
@@ -936,6 +946,7 @@ async def assign_user_modulo(
 # ASIGNAR ACCIÓN
 # ============================================================
 
+@atomic()
 async def assign_user_accion(
     user_id: UUID,
     data: UsuarioAccionCreate,
@@ -1028,6 +1039,7 @@ async def assign_user_accion(
 # REMOVER GRUPO
 # ============================================================
 
+@atomic()
 async def remove_user_grupo(
     user_id: UUID,
     grupo_id: UUID,
@@ -1078,6 +1090,7 @@ async def remove_user_grupo(
     ).exists()
 
     if remueve_super_admin:
+        await bloquear_mutacion_super_admin()
         await validar_retiro_super_admin(
             target_user_id=user_id,
             current_user_id=current_user_id,
@@ -1134,6 +1147,7 @@ async def remove_user_grupo(
 # REMOVER MÓDULO
 # ============================================================
 
+@atomic()
 async def remove_user_modulo(
     user_id: UUID,
     modulo_id: UUID,
@@ -1186,6 +1200,7 @@ async def remove_user_modulo(
     ).exists()
 
     if remueve_super_admin:
+        await bloquear_mutacion_super_admin()
         await validar_retiro_super_admin(
             target_user_id=user_id,
             current_user_id=current_user_id,
@@ -1225,6 +1240,7 @@ async def remove_user_modulo(
 # REMOVER ACCIÓN
 # ============================================================
 
+@atomic()
 async def remove_user_accion(
     user_id: UUID,
     accion_id: UUID,
@@ -1272,6 +1288,7 @@ async def remove_user_accion(
         )
 
     if accion.nombre == SUPER_ADMIN_ACTION:
+        await bloquear_mutacion_super_admin()
         await validar_retiro_super_admin(
             target_user_id=user_id,
             current_user_id=current_user_id,
@@ -1913,6 +1930,7 @@ async def apply_user_permissions_delta(
         ).exists()
 
     if remueve_super_admin:
+        await bloquear_mutacion_super_admin()
         await validar_retiro_super_admin(
             target_user_id=user_id,
             current_user_id=current_user_id,
@@ -2041,15 +2059,18 @@ async def apply_user_permissions_delta(
 # ASIGNACIÓN MASIVA DE PERMISOS
 # ============================================================
 
-async def assign_user_permisos_masivos(
+@atomic()
+async def _assign_user_permisos_masivos_en_transaccion(
     user_id: UUID,
     data: UsuarioPermisosMasivosCreate,
     current_user_id: UUID,
 ):
+    """Valida y guarda asignaciones, versión de sesión y token en una sola transacción.
 
-    user = await User.get_or_none(
-        id=user_id
-    )
+    El bloqueo del usuario serializa las asignaciones masivas sobre la misma cuenta.
+    No realiza llamadas a SMTP: una excepción aquí revierte todas las escrituras.
+    """
+    user = await User.filter(id=user_id).select_for_update().first()
 
     if not user:
         raise HTTPException(
@@ -2298,51 +2319,61 @@ async def assign_user_permisos_masivos(
         # aunque se hayan asignado varios permisos.
         await invalidar_sesiones_usuario(user)
 
-    # ========================================================
-    # CORREO DE BIENVENIDA
-    # ========================================================
+    # Preparar token y contenido dentro de la misma transacción:
+    # cualquier fallo aquí revierte también grupos, módulos y acciones.
+    token_activacion = None
+    sistemas_html = None
+    if permisos_nuevos_asignados and not user.contrasena_hasheada:
+        token_activacion = await generar_token_creacion_password(user)
+        sistemas_html = await obtener_sistemas_usuario_para_correo(user.id)
 
-    correo_bienvenida_enviado = False
-
-    if (
-        permisos_nuevos_asignados
-        and not user.contrasena_hasheada
-    ):
-
-        token = await generar_token_creacion_password(
-            user
-        )
-
-        sistemas_html = (
-            await obtener_sistemas_usuario_para_correo(
-                user.id
-            )
-        )
-
-        await enviar_correo_activacion_usuario(
-            user=user,
-            token=token,
-            sistemas_html=sistemas_html,
-        )
-
-        correo_bienvenida_enviado = True
-
-    # ========================================================
-    # PERMISOS ACTUALES
-    # ========================================================
-
-    permisos = await obtener_permisos_usuario(
-        user_id
-    )
-
-    return {
+    permisos = await obtener_permisos_usuario(user_id)
+    resultado = {
         "message": "Permisos asignados correctamente.",
         "user_id": str(user_id),
         "grupos_asignados": grupos_asignados,
         "modulos_asignados": modulos_asignados,
         "acciones_asignadas": acciones_asignadas,
-        "correo_bienvenida_enviado": (
-            correo_bienvenida_enviado
-        ),
+        "correo_bienvenida_enviado": False,
         "permisos": permisos,
     }
+    return resultado, user, token_activacion, sistemas_html
+
+
+async def assign_user_permisos_masivos(
+    user_id: UUID,
+    data: UsuarioPermisosMasivosCreate,
+    current_user_id: UUID,
+):
+    """Asigna permisos de forma atómica y envía el correo tras confirmar la BD.
+
+    Fallos SMTP no deshacen permisos confirmados; el resultado distingue el
+    envío que devolvió éxito. Existe /reenviar-activacion para reintentos.
+    El diseño no garantiza entrega duradera sin una futura cola/outbox.
+    """
+    resultado, user, token, sistemas_html = (
+        await _assign_user_permisos_masivos_en_transaccion(
+            user_id=user_id,
+            data=data,
+            current_user_id=current_user_id,
+        )
+    )
+
+    # El decorador de la función anterior YA terminó y confirmó la transacción.
+    # No exponer el token en logs ni en la respuesta HTTP.
+    if token is not None:
+        try:
+            await enviar_correo_activacion_usuario(
+                user=user,
+                token=token,
+                sistemas_html=sistemas_html,
+            )
+        except Exception:
+            logger.exception(
+                "Error enviando activación después de confirmar permisos para usuario %s",
+                user_id,
+            )
+        else:
+            resultado["correo_bienvenida_enviado"] = True
+
+    return resultado

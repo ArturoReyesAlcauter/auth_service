@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, status
 from tortoise.expressions import F
+from tortoise.transactions import atomic, in_transaction
 from app.models.user import (
     User,
     UltimaSesion,
@@ -11,6 +12,7 @@ from app.models.user import (
     TokenUsuario,
 )
 from app.services.super_admin_guard import (
+    bloquear_mutacion_super_admin,
     validar_revocacion_total_por_inactividad,
 )
 
@@ -82,6 +84,7 @@ async def invalidar_sesiones_usuario(
     return usuario
 
 
+@atomic()
 async def revocar_accesos_usuario(usuario: User):
     """
     Elimina todos los permisos asignados directamente al usuario.
@@ -95,9 +98,10 @@ async def revocar_accesos_usuario(usuario: User):
     No elimina al usuario ni modifica su estatus.
     """
 
-    await validar_revocacion_total_por_inactividad(
-        usuario.id
-    )
+    # Coordinación compartida con las revocaciones y cambios de estatus.
+    # Al estar en @atomic, el bloqueo persiste hasta confirmar la operación.
+    await bloquear_mutacion_super_admin()
+    await validar_revocacion_total_por_inactividad(usuario.id)
 
     await UsuarioAccion.filter(
         usuario_id=usuario.id
@@ -154,11 +158,12 @@ async def validar_ultima_sesion_o_revocar(usuario: User):
 
         if ahora > fecha_limite:
 
-            await revocar_accesos_usuario(usuario)
-
-            # También invalidamos cualquier JWT que pudiera
-            # seguir activo.
-            await invalidar_sesiones_usuario(usuario)
+            # Los permisos y la versión del JWT se confirman juntos.
+            # El 403 debe lanzarse DESPUÉS de cerrar la transacción;
+            # de lo contrario el rollback restauraría los accesos revocados.
+            async with in_transaction():
+                await revocar_accesos_usuario(usuario)
+                await invalidar_sesiones_usuario(usuario)
 
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
